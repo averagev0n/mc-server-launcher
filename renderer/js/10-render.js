@@ -149,7 +149,7 @@ function renderAddress(show) {
     ? [{ text: serverIp + suffix, sub: '' }]
     : [
         ...addresses.map((a) => ({ text: a.address + suffix, sub: a.vpn ? `VPN · ${a.name}` : a.name })),
-        { text: 'localhost' + suffix, sub: 'с этого компьютера' },
+        { text: 'localhost' + suffix, sub: 'этот ПК' },
       ];
   const label = document.createElement('span');
   label.className = 'label';
@@ -182,7 +182,7 @@ function renderAddress(show) {
   const check = document.createElement('button');
   check.type = 'button';
   check.className = 'link-btn net-check';
-  check.textContent = serverIp ? '' : 'Проверить доступ из интернета';
+  check.textContent = serverIp ? '' : 'Проверить из интернета';
   check.hidden = !!serverIp;
   check.addEventListener('click', () => checkInternet());
   box.appendChild(check);

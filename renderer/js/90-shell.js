@@ -127,6 +127,7 @@ function openWizard() {
   if (!confirmDiscard()) return;
   resetConfigs();
   wz.prev = $('version').value && mode === 'server' ? { type, version: $('version').value } : null;
+  wz.import = null;
   mode = 'wizard';
   wz.step = 1;
   pinVersion = '';
@@ -154,6 +155,7 @@ function pickType(t, force = false) {
 }
 
 function closeWizard() {
+  wz.import = null;
   if (wz.prev) {
     // Возвращаемся к серверу, который был открыт до мастера.
     selectServer(wz.prev.type, wz.prev.version);
@@ -213,7 +215,9 @@ function renderWizard() {
     if (typeof renderWizardWorld === 'function') renderWizardWorld();
     const v = $('version').value;
     const loaderText = isModded() && $('loader').selectedOptions[0] ? `, ${$('loader').selectedOptions[0].textContent}` : '';
-    $('wz-summary').textContent = `${KIND_TEXT[type]}, Minecraft ${v}${loaderText}. Осталось выбрать память и принять лицензию Minecraft — файлы сервера скачаются при первом запуске.`;
+    $('wz-summary').textContent = wz.import
+      ? `${KIND_TEXT[type]}, Minecraft ${v}${loaderText}. Из папки «${wz.import.name}» перенесутся мир, моды, плагины и настройки, а сам сервер лаунчер скачает заново.`
+      : `${KIND_TEXT[type]}, Minecraft ${v}${loaderText}. Осталось выбрать память и принять лицензию Minecraft — файлы сервера скачаются при первом запуске.`;
     const create = $('wz-create');
     create.textContent = info && info.installed ? 'Открыть и запустить' : 'Создать и запустить';
     if (state !== 'stopped') {
@@ -233,8 +237,14 @@ async function createFromWizard() {
   const v = $('version').value;
   const name = $('wz-name').value.trim();
   try {
+    if (wz.import) {
+      setHint('wz-hint', 'Переношу сервер…');
+      await api.call('server:importCopy', { src: wz.import.path, type: t, version: v });
+      wz.import = null;
+    } else {
+      await applyWizardWorld(t, v);
+    }
     if (name) await api.call('maint:set', { type: t, version: v, settings: { name } });
-    await applyWizardWorld(t, v);
   } catch (e) {
     setHint('wz-hint', e.message, 'bad');
     return;

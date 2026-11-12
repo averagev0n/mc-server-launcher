@@ -17,6 +17,9 @@ const { createVps, HostKeyError } = require('./lib/vps');
 const servers = require('./lib/servers');
 const upnp = require('./lib/upnp');
 const { createDiscord, escapeMd } = require('./lib/discord');
+const gamerules = require('./lib/gamerules');
+const tps = require('./lib/tps');
+const playtime = require('./lib/playtime');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
@@ -167,6 +170,7 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
       log('Делаю резервную копию мира перед запуском…');
       const b = await backup.create(dir, 'auto');
       if (b) log(`Копия сохранена: ${b.file} (${fmtSize(b.size)}).`);
+      if (b) mirrorBackup(dir, b.file);
       send('backups', { dir });
     }
   } catch (e) {
@@ -176,6 +180,10 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   }
 
   lastStart = { type, version, loader, ramGb, javaPath, eula: false };
+  saveLastStart(lastStart);
+  tracker = playtime.createTracker(dir);
+  lastTps = null;
+  tpsFails = 0;
   resetIssues(dir, {
     type,
     version,
@@ -205,7 +213,7 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   online = new Set();
   maxPlayers = Number(core.readProps(dir)['max-players']) || 20;
   sendPlayers();
-  stopMonitor = startMonitor(proc.pid, (s) => send('stats', { ...s, ramGb: java.bits === 32 ? 1 : ram, players: online.size, uptime: Date.now() - startedAt }));
+  stopMonitor = startMonitor(proc.pid, (s) => send('stats', { ...s, ramGb: java.bits === 32 ? 1 : ram, players: online.size, uptime: Date.now() - startedAt, tps: lastTps }));
 
   const pipe = (stream, kind) => {
     let buf = '';
@@ -218,6 +226,11 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
         const line = cleanLine(raw);
         if (!line && raw.trim()) continue;
         if (state === 'starting' && /Done \(/.test(line)) setState('running');
+        // Ответ на тихий запрос TPS — в консоль не показываем.
+        if (tpsUntil > Date.now() && tps.isTpsLine(line)) {
+          handleTpsLine(line);
+          continue;
+        }
         send('log', { text: line, kind });
         addLogLine(line);
       }
@@ -452,6 +465,7 @@ async function makeBackup(dir, reason, running) {
     log(`Делаю резервную копию мира (${backup.REASONS[reason]})…`);
     const b = await backup.create(dir, reason);
     if (b) log(`Копия сохранена: ${b.file} (${fmtSize(b.size)}).`);
+    if (b) mirrorBackup(dir, b.file);
     else log('Мира ещё нет — копировать нечего.');
     lastBackupAt = Date.now();
     send('backups', { dir });
@@ -611,10 +625,15 @@ let quitRequested = false;
 let tray = null;
 let trayHinted = false;
 
-const PREF_DEFAULTS = { tray: true, notify: { started: true, players: true, crash: true } };
+const PREF_DEFAULTS = { tray: true, autostart: false, autoStartServer: false, notify: { started: true, players: true, crash: true } };
 function prefs() {
   const p = readUi().prefs || {};
-  return { tray: p.tray ?? PREF_DEFAULTS.tray, notify: { ...PREF_DEFAULTS.notify, ...(p.notify || {}) } };
+  return {
+    tray: p.tray ?? PREF_DEFAULTS.tray,
+    autostart: p.autostart ?? false,
+    autoStartServer: p.autoStartServer ?? false,
+    notify: { ...PREF_DEFAULTS.notify, ...(p.notify || {}) },
+  };
 }
 
 function serverTitle(type, version) {
@@ -706,11 +725,21 @@ function onState(next) {
     notify('Сервер запущен', `«${title}» готов — можно заходить.`, false, 'started');
     if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🟢 Сервер **${escapeMd(title)}** запущен (Minecraft ${version}).`);
     if (s.net.upnp) openUpnp(Number(core.readProps(serverDir(type, version))['server-port']) || 25565).catch(() => {});
+    if (applyGamerules(type, version)) log('Правила игры из лаунчера применены.');
+    if (s.tunnel.auto && s.tunnel.address && fs.existsSync(PLAYIT_EXE()) && !playitProc) {
+      startPlayit(false);
+      playitAuto = true;
+      log(`Туннель playit.gg запущен: ${s.tunnel.address}`);
+    }
   }
 }
 
 function onPlayer(name, joined) {
   if (!current) return;
+  if (tracker) {
+    if (joined) tracker.join(name);
+    else tracker.leave(name);
+  }
   if (tray) setTimeout(trayMenu, 0);
   const s = currentSettings();
   if (!win || !win.isVisible() || !win.isFocused()) {
@@ -723,6 +752,10 @@ function onPlayer(name, joined) {
 
 function onStopped({ dir, type, version, code, stoppedByUser }) {
   closeUpnp();
+  if (tracker) tracker.closeAll();
+  tracker = null;
+  lastTps = null;
+  if (playitAuto) stopPlayit();
   const s = backup.readSettings(dir);
   const title = serverTitle(type, version);
   if (code && !stoppedByUser) {
@@ -774,6 +807,8 @@ handle('ui:setPrefs', (input) => {
   const cur = prefs();
   const next = {
     tray: !!(input.tray ?? cur.tray),
+    autostart: !!(input.autostart ?? cur.autostart),
+    autoStartServer: !!(input.autoStartServer ?? cur.autoStartServer),
     notify: {
       started: !!((input.notify || {}).started ?? cur.notify.started),
       players: !!((input.notify || {}).players ?? cur.notify.players),
@@ -782,6 +817,7 @@ handle('ui:setPrefs', (input) => {
   };
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), prefs: next }), 'utf8');
+  if (next.autostart !== cur.autostart) applyLoginItem(next.autostart);
   if (!next.tray && tray) {
     tray.destroy();
     tray = null;
@@ -932,6 +968,214 @@ handle('map:open', ({ type, version }) => {
   const { port } = bluemapInfo(type, serverDir(type, version));
   return shell.openExternal(`http://localhost:${port}`);
 });
+
+// ---- плавность (TPS): тихий запрос раз в 10 секунд ----
+
+let lastTps = null; // { tps, mspt }
+let tpsUntil = 0; // до этого момента ответы на запрос прячутся из консоли
+let tpsFails = 0;
+let tracker = null; // учёт времени игроков текущего запуска
+
+function handleTpsLine(line) {
+  const r = tps.parse(line);
+  if (r) {
+    lastTps = r;
+    tpsFails = 0;
+  } else if (tps.isUnknown(line)) {
+    tpsFails++;
+  }
+}
+setInterval(() => {
+  if (!child || state !== 'running' || !current || tpsFails >= 2) return;
+  const cmd = tps.queryFor(current.type, current.version);
+  if (!cmd) return;
+  tpsUntil = Date.now() + 2500;
+  runCmd(cmd);
+}, 10000);
+
+// ---- правила игры ----
+
+function applyGamerules(type, version) {
+  const rules = backup.readSettings(serverDir(type, version)).gamerules;
+  const cmds = gamerules.commandsFor(version, rules);
+  for (const c of cmds) runCmd(c);
+  return cmds.length;
+}
+handle('rules:set', ({ type, version, rules }) => {
+  const s = backup.writeSettings(serverDir(type, version), { gamerules: rules || {} });
+  const live = isCurrent(type, version) && state === 'running';
+  const n = live ? applyGamerules(type, version) : 0;
+  if (n) log(`Правила игры применены (${n}).`);
+  return { rules: s.gamerules, applied: live };
+});
+
+// ---- игроки: кто заходил ----
+
+handle('players:stats', ({ type, version }) => playtime.list(serverDir(type, version)));
+
+// ---- копии в облачную папку ----
+
+function mirrorBackup(dir, file) {
+  const s = backup.readSettings(dir).backup;
+  if (!s.mirror || !file) return;
+  try {
+    backup.mirror(dir, file, s.mirror, s.keep);
+  } catch (e) {
+    log(`Не удалось положить копию в «${s.mirror}»: ${e.message}`, 'error');
+  }
+}
+handle('backup:pickMirror', async () => {
+  const home = os.homedir();
+  const guess = ['OneDrive', 'YandexDisk', 'Яндекс.Диск', 'Google Drive', 'Dropbox'].map((n) => path.join(home, n)).find((p) => fs.existsSync(p));
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Папка для копий мира (например, в OneDrive или на Яндекс.Диске)',
+    defaultPath: guess || home,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return r.canceled ? null : r.filePaths[0] || null;
+});
+handle('backup:cloudGuess', () => {
+  const home = os.homedir();
+  return ['OneDrive', 'YandexDisk', 'Яндекс.Диск', 'Google Drive', 'Dropbox'].filter((n) => fs.existsSync(path.join(home, n)));
+});
+
+// ---- запуск вместе с Windows ----
+
+const launchExe = () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+function applyLoginItem(on) {
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({ openAtLogin: !!on, path: launchExe(), args: ['--hidden'] });
+}
+function saveLastStart(opts) {
+  try {
+    const { type, version, loader, ramGb, javaPath } = opts;
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), lastStart: { type, version, loader, ramGb, javaPath } }), 'utf8');
+  } catch {
+    /* не страшно */
+  }
+}
+/** Лаунчер запущен вместе с Windows — сразу поднимаем последний сервер, если так настроено. */
+function autoStartServer() {
+  const p = prefs();
+  const last = readUi().lastStart;
+  if (!p.autoStartServer || !last || state !== 'stopped') return;
+  try {
+    if (!core.eulaAccepted(serverDir(last.type, last.version))) return;
+  } catch {
+    return;
+  }
+  setTimeout(() => {
+    log(`Автозапуск: ${serverTitle(last.type, last.version)}…`);
+    startServer({ ...last, eula: false }).catch((e) => log(`Автозапуск не удался: ${e.message}`, 'error'));
+  }, 3000);
+}
+
+// ---- готовый сервер из другой папки ----
+
+/** Версия vanilla-сервера из version.json внутри server.jar (распаковывает встроенный в Windows tar). */
+function readJarVersion(jar) {
+  return new Promise((resolve) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcl-jar-'));
+    const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    require('child_process').execFile(tarExe, ['-xf', jar, '-C', tmp, 'version.json'], { windowsHide: true, timeout: 20000 }, () => {
+      let v = null;
+      try {
+        v = JSON.parse(fs.readFileSync(path.join(tmp, 'version.json'), 'utf8')).id || null;
+      } catch {
+        /* старый server.jar без version.json */
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+      resolve(v);
+    });
+  });
+}
+handle('server:importPick', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Папка с готовым сервером Minecraft', properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const dir = r.filePaths[0];
+  if (path.resolve(dir).startsWith(path.resolve(ROOT) + path.sep)) throw new Error('Этот сервер уже есть в лаунчере');
+  return servers.detectServer(dir, readJarVersion);
+});
+handle('server:importCopy', ({ src, type, version }) => {
+  core.checkArgs(type, version);
+  if (!fs.existsSync(String(src))) throw new Error('Папка не найдена');
+  const r = servers.importServer(String(src), serverDir(type, version));
+  log(`Перенесено из «${src}»: ${r.copied.join(', ') || 'ничего'}.`);
+  return r;
+});
+
+// ---- новые сборки ядра ----
+
+handle('server:paperBuild', async ({ type, version }) => {
+  if (type !== 'paper') return null;
+  const inst = core.readInstall(serverDir(type, version));
+  if (!inst || !inst.loader) return null;
+  const latest = await core.resolveDownload('paper', version);
+  return { installed: inst.loader, latest: latest.build };
+});
+// Paper обновляется так: лаунчер забывает установку, и при следующем запуске скачивает свежую сборку.
+handle('server:paperRefresh', ({ type, version }) => {
+  if (type !== 'paper') throw new Error('Только для Paper');
+  fs.rmSync(path.join(serverDir(type, version), 'launcher.json'), { force: true });
+});
+
+// ---- туннель playit.gg ----
+
+const PLAYIT_DIR = () => path.join(app.getPath('userData'), 'playit');
+const PLAYIT_EXE = () => path.join(PLAYIT_DIR(), 'playit.exe');
+let playitProc = null;
+let playitAuto = false; // запущен лаунчером вместе с сервером — и остановится вместе с ним
+
+async function downloadPlayit() {
+  if (fs.existsSync(PLAYIT_EXE())) return;
+  const rel = await getJson('https://api.github.com/repos/playit-cloud/playit-agent/releases/latest');
+  const asset =
+    (rel.assets || []).find((a) => a.name === 'playit-windows-x86_64-signed.exe') ||
+    (rel.assets || []).find((a) => a.name === 'playit-windows-x86_64.exe');
+  if (!asset || !/^https:\/\/github\.com\/playit-cloud\/playit-agent\/releases\/download\//.test(asset.browser_download_url)) {
+    throw new Error('Не удалось найти программу playit для Windows');
+  }
+  log(`Скачиваю playit ${rel.tag_name || ''}…`);
+  fs.mkdirSync(PLAYIT_DIR(), { recursive: true });
+  const tmp = PLAYIT_EXE() + '.part';
+  await core.downloadFile({ url: asset.browser_download_url, size: asset.size }, tmp);
+  fs.renameSync(tmp, PLAYIT_EXE());
+}
+function startPlayit(visible) {
+  if (playitProc) return;
+  const proc = spawn(PLAYIT_EXE(), [], { cwd: PLAYIT_DIR(), detached: visible, stdio: 'ignore', windowsHide: !visible });
+  playitProc = proc;
+  proc.on('error', (e) => log(`playit не запустился: ${e.message}`, 'error'));
+  proc.on('exit', () => {
+    if (playitProc === proc) playitProc = null;
+    send('tunnel', { running: false });
+  });
+  send('tunnel', { running: true });
+}
+function stopPlayit() {
+  if (!playitProc) return;
+  try {
+    playitProc.kill();
+  } catch {
+    /* уже завершился */
+  }
+  playitProc = null;
+  playitAuto = false;
+}
+handle('tunnel:get', ({ type, version }) => ({
+  ...backup.readSettings(serverDir(type, version)).tunnel,
+  downloaded: fs.existsSync(PLAYIT_EXE()),
+  running: !!playitProc,
+}));
+handle('tunnel:setup', async () => {
+  await downloadPlayit();
+  stopPlayit();
+  startPlayit(true);
+  return { running: true };
+});
+handle('tunnel:stop', () => stopPlayit());
+handle('tunnel:set', ({ type, version, address, auto }) => backup.writeSettings(serverDir(type, version), { tunnel: { address, auto } }).tunnel);
 
 // ---- оформление: светлая, тёмная или как в Windows ----
 
@@ -1315,8 +1559,9 @@ handle('open:mod', ({ slug, kind }) => {
   return shell.openExternal(`https://modrinth.com/${kind === 'plugin' ? 'plugin' : 'mod'}/${slug}`);
 });
 
-function createWindow() {
+function createWindow(hidden = false) {
   win = new BrowserWindow({
+    show: !hidden,
     width: 1180,
     height: 760,
     minWidth: 900,
@@ -1359,7 +1604,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => showWindow());
   app.setAppUserModelId('local.mcserverlauncher');
   app.whenReady().then(() => {
-    createWindow();
+    const hidden = process.argv.includes('--hidden');
+    createWindow(hidden);
+    if (hidden) ensureTray();
+    autoStartServer();
     updater.init(send);
   });
 }
@@ -1385,4 +1633,7 @@ app.on('before-quit', (e) => {
 });
 app.on('window-all-closed', () => app.quit());
 // Серверы на VPS продолжают работать — закрываем только SSH-соединения.
-app.on('will-quit', () => vpsApi && vpsApi.shutdown());
+app.on('will-quit', () => {
+  if (vpsApi) vpsApi.shutdown();
+  if (playitAuto) stopPlayit();
+});

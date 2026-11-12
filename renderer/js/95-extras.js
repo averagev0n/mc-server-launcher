@@ -380,7 +380,7 @@ $('preset-go').addEventListener('click', async () => {
 // ---- мир в мастере ----
 
 function renderWizardWorld() {
-  const existing = !!(info && info.installed);
+  const existing = !!(info && info.installed) || !!wz.import;
   $('wz-world').hidden = existing;
   for (const b of document.querySelectorAll('[data-world]')) b.setAttribute('aria-checked', String(b.dataset.world === wzWorld));
   $('wz-world-new').hidden = existing || wzWorld !== 'new';

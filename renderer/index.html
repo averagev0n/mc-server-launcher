@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src https://cdn.modrinth.com">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src https://cdn.modrinth.com https://mc-heads.net">
   <title>Лаунчер сервера Minecraft</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -98,7 +98,7 @@
         </div>
         <p class="hint" id="type-hint"></p>
         <div class="wz-foot">
-          <span class="hint-line">Есть готовая сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button></span>
+          <span class="hint-line">Есть сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button> · Уже есть сервер? <button type="button" id="import-server" class="link-btn">Добавить его папку</button></span>
           <button type="button" class="btn big ghost" data-wz="cancel">Отмена</button>
           <button type="button" class="btn big primary" data-wz="next">Дальше</button>
         </div>
@@ -200,6 +200,7 @@
         <div class="stat"><span class="stat-label">Свободно в ПК</span><b id="st-sys">—</b></div>
         <div class="stat"><span class="stat-label">Игроки</span><b id="st-players">—</b></div>
         <div class="stat"><span class="stat-label">Работает</span><b id="st-uptime">—</b></div>
+        <div class="stat" id="st-tps-box" hidden title="Тиков в секунду: 20 — сервер успевает, меньше — тормозит"><span class="stat-label">Плавность</span><b id="st-tps">—</b></div>
         <canvas id="st-chart" class="stat-chart" width="260" height="44" role="img" aria-label="График загрузки за последние минуты"></canvas>
       </div>
       <div id="issues" class="issues" hidden>
@@ -209,9 +210,21 @@
         </div>
         <div id="issues-list" class="issues-list" role="list" aria-live="polite"></div>
       </div>
+      <div class="log-tools">
+        <input type="search" id="log-search" placeholder="Найти в журнале" autocomplete="off">
+        <label class="check"><input type="checkbox" id="log-errors"><span>Только ошибки</span></label>
+        <div class="quick" id="quick" aria-label="Быстрые команды">
+          <button type="button" class="btn small" data-quick="time set day">День</button>
+          <button type="button" class="btn small" data-quick="weather clear">Ясно</button>
+          <button type="button" class="btn small" data-quick="save-all">Сохранить мир</button>
+          <button type="button" class="btn small" data-quick="say ">Сообщение всем…</button>
+          <button type="button" class="btn small" data-quick="list">Кто онлайн</button>
+        </div>
+      </div>
       <div id="log" class="log" role="log" aria-live="off"></div>
       <form id="cmd-form" class="cmd">
-        <input type="text" id="cmd" placeholder="Команда серверу, например: op Ник" autocomplete="off" disabled>
+        <input type="text" id="cmd" placeholder="Команда серверу, например: op Ник (↑ — прошлые команды)" autocomplete="off" list="cmd-list" disabled>
+        <datalist id="cmd-list"></datalist>
         <button type="submit" id="send" class="btn primary" disabled>Отправить</button>
         <button type="button" id="clear" class="btn">Очистить</button>
       </form>
@@ -333,7 +346,7 @@
             </div>
             <p class="hint" id="cfg-hint"></p>
             <div id="cfg-form" class="cfg-form"></div>
-            <textarea id="cfg-text" class="cfg-text" spellcheck="false" hidden></textarea>
+            <textarea id="cfg-text" class="cfg-text" spellcheck="false" placeholder="Файл пустой" hidden></textarea>
             <div class="cfg-actions">
               <p class="hint" id="cfg-status"></p>
               <button type="button" id="cfg-restart" class="btn" hidden>Перезапустить сервер</button>
@@ -351,6 +364,10 @@
         <section class="card">
           <h2 id="pl-online-title">Сейчас на сервере</h2>
           <div id="pl-online" class="chips"></div>
+        </section>
+        <section class="card">
+          <h2>Все, кто заходил</h2>
+          <div id="pl-all" class="pl-all"></div>
         </section>
         <div class="pl-grid">
           <section class="card">
@@ -410,6 +427,16 @@
             <label class="field"><span>Хранить автокопий</span><input type="number" id="bk-keep" min="1" max="100"></label>
           </div>
           <p class="hint">Старые автоматические копии удаляются сами. Сделанные вручную — никогда.</p>
+        </section>
+        <section class="card">
+          <h2>Копии в облако</h2>
+          <p class="hint">Каждая копия мира будет ещё и складываться в выбранную папку. Выберите папку OneDrive, Яндекс.Диска или Google Диска — и мир переживёт даже поломку компьютера.</p>
+          <div class="row">
+            <input type="text" id="bk-mirror" readonly placeholder="Не выбрана — копии только на этом компьютере">
+            <button type="button" id="bk-mirror-pick" class="btn">Выбрать папку…</button>
+            <button type="button" id="bk-mirror-off" class="btn" hidden>Не копировать</button>
+          </div>
+          <p class="hint" id="bk-mirror-hint"></p>
         </section>
         <section class="card">
           <h2>Перезапуск по расписанию</h2>
@@ -536,6 +563,7 @@
             </div>
             <p class="hint" id="up-hint"></p>
           </div>
+          <p class="hint" id="build-hint"></p>
           <p class="hint" id="srv-hint"></p>
         </section>
 
@@ -612,6 +640,40 @@
         </section>
 
         <section class="card">
+          <h2>Туннель playit.gg — если нет белого IP</h2>
+          <p class="hint">Бесплатный сервис playit.gg даёт постоянный адрес, по которому друзья заходят из интернета, даже если провайдер не выдаёт внешний IP и порт открыть нельзя. Нужен бесплатный аккаунт playit.gg.</p>
+          <ol class="steps-list">
+            <li>Нажмите «Настроить» — лаунчер скачает официальную программу playit и откроет её окно.</li>
+            <li>В окне playit будет ссылка — откройте её и войдите в аккаунт playit.gg.</li>
+            <li>На сайте добавьте туннель «Minecraft Java», локальный порт — <b id="tn-port">25565</b>.</li>
+            <li>Скопируйте адрес туннеля с сайта и вставьте сюда.</li>
+          </ol>
+          <div class="row">
+            <button type="button" id="tn-setup" class="btn">Настроить</button>
+            <button type="button" id="tn-stop" class="btn" hidden>Остановить playit</button>
+          </div>
+          <label class="field"><span>Адрес туннеля</span><input type="text" id="tn-addr" placeholder="например: castle-river.joinmc.link" autocomplete="off" spellcheck="false"></label>
+          <label class="check"><input type="checkbox" id="tn-auto"><span>Запускать туннель вместе с сервером</span></label>
+          <p class="hint" id="tn-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Правила игры</h2>
+          <p class="hint">Применяются при каждом запуске сервера, а если он работает — сразу. Правила, которые вы здесь не трогали, остаются такими, как в мире.</p>
+          <div class="rules" id="rules">
+            <label class="check"><input type="checkbox" data-rule="keepInventory"><span>Вещи не выпадают после смерти</span></label>
+            <label class="check"><input type="checkbox" data-rule="mobGriefing" data-invert><span>Мобы не ломают блоки (криперы, эндермены)</span></label>
+            <label class="check"><input type="checkbox" data-rule="doInsomnia" data-invert><span>Без фантомов</span></label>
+            <label class="check"><input type="checkbox" data-rule="playersSleepingPercentage"><span>Ночь пропускается, если спит хотя бы один игрок</span></label>
+            <label class="check"><input type="checkbox" data-rule="doImmediateRespawn"><span>Возрождение сразу, без экрана смерти</span></label>
+            <label class="check"><input type="checkbox" data-rule="doDaylightCycle" data-invert><span>Время стоит (день не сменяется ночью)</span></label>
+            <label class="check"><input type="checkbox" data-rule="doWeatherCycle" data-invert><span>Погода не меняется</span></label>
+            <label class="check"><input type="checkbox" data-rule="announceAdvancements" data-invert><span>Не писать в чат о достижениях</span></label>
+          </div>
+          <p class="hint" id="rules-hint"></p>
+        </section>
+
+        <section class="card">
           <h2>Сообщения в Discord</h2>
           <p class="hint">В настройках канала Discord: «Интеграция» → «Вебхуки» → «Новый вебхук» → «Копировать URL вебхука». Вставьте адрес сюда.</p>
           <label class="field"><span>Адрес вебхука</span><input type="text" id="dc-url" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false"></label>
@@ -641,6 +703,8 @@
         <section class="card">
           <h2>Лаунчер</h2>
           <label class="check"><input type="checkbox" id="pf-tray"><span>Если закрыть окно, пока сервер работает, — сворачивать в трей (сервер продолжит работать)</span></label>
+          <label class="check"><input type="checkbox" id="pf-autostart"><span>Запускать лаунчер вместе с Windows (свёрнутым в трей)</span></label>
+          <label class="check"><input type="checkbox" id="pf-autoserver"><span>Сразу запускать последний сервер, когда открывается лаунчер</span></label>
           <span class="sub-label">Уведомления Windows</span>
           <div class="checks">
             <label class="check"><input type="checkbox" id="pf-started"><span>Сервер готов</span></label>
@@ -715,6 +779,7 @@
   <script src="js/80-events.js"></script>
   <script src="js/90-shell.js"></script>
   <script src="js/95-extras.js"></script>
+  <script src="js/96-more.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

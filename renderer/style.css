@@ -730,10 +730,43 @@ input[type="time"] {
 .checks { display: flex; flex-wrap: wrap; gap: 8px 22px; }
 .sub-label { font-size: 12.5px; color: var(--muted); }
 .card .row select { flex: 1; min-width: 0; }
-.address .net-check { margin-left: auto; font-size: 13px; }
+.address .net-check { margin-left: 8px; font-size: 13px; }
 .presets { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .presets-label { font-size: 13px; color: var(--muted); }
 .presets .hint { flex: 1; min-width: 200px; }
 #wz-world .seg { align-self: flex-start; }
 .row > select { flex: 1; min-width: 0; width: auto; }
 .row:has(> select) > .btn { flex: none; }
+
+/* Строки длинных списков не сжимаются: иначе при сотнях файлов текст обрезается в точки. */
+.cfg-tree > *, .list > *, .vps-items > *, .srv-list > *, .issues-list > * { flex: none; }
+
+/* ---- консоль: инструменты ---- */
+.log-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: none; }
+.log-tools input[type="search"] { width: 220px; height: 32px; }
+.log-tools .quick { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.log.only-errors > div:not(.error) { display: none; }
+
+/* ---- настройки: правила, туннель ---- */
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 20px; }
+.steps-list { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.6; }
+.steps-list b { font-family: var(--mono); }
+
+/* ---- игроки: все, кто заходил ---- */
+.pl-all { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.pl-all > * { flex: none; }
+.pl-row { display: flex; align-items: center; gap: 12px; padding: 7px 8px; border-radius: 10px; }
+.pl-row:hover { background: var(--raise); }
+.pl-face { width: 32px; height: 32px; border-radius: 6px; image-rendering: pixelated; background: var(--raise); flex: none; }
+.pl-face.none { visibility: hidden; }
+.pl-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pl-t b { font-weight: 600; }
+.pl-t span { font-size: 12.5px; color: var(--muted); }
+.pl-acts { display: flex; gap: 6px; flex: none; }
+.pl-acts .btn { flex: none; }
+
+/* ---- приглашение ---- */
+.address .invite-btn { margin-left: auto; font-size: 13px; color: var(--accent); }
+.invite { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); flex: none; }
+.invite textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--input); color: var(--text); font: inherit; line-height: 1.5; }
+.invite .row .btn { flex: none; }
