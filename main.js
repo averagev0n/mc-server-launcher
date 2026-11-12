@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog, nativeTheme } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -6,12 +6,19 @@ const { spawn } = require('child_process');
 const core = require('./lib/core');
 const mods = require('./lib/mods');
 const configs = require('./lib/configs');
+const pack = require('./lib/pack');
+const mrpack = require('./lib/mrpack');
+const backup = require('./lib/backup');
+const players = require('./lib/players');
+const { startMonitor } = require('./lib/monitor');
 const updater = require('./lib/updater');
 const diagnose = require('./lib/diagnose');
 const { createVps, HostKeyError } = require('./lib/vps');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
+// Java, которую лаунчер скачивает сам, живёт в папке данных программы.
+core.setJavaDir(path.join(app.getPath('userData'), 'java'));
 
 const EULA_URL = 'https://aka.ms/MinecraftEULA';
 const javaUrl = (v) => `https://adoptium.net/temurin/releases/?version=${Number(v) || 21}&os=windows&arch=x64`;
@@ -150,6 +157,13 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
       inst = core.readInstall(dir);
     }
     if (eula) fs.writeFileSync(path.join(dir, 'eula.txt'), 'eula=true\n', 'utf8');
+    // Копия мира перед запуском — на случай, если моды или плагины что-то сломают.
+    if (backup.readSettings(dir).backup.beforeStart && backup.worldDirs(dir).length) {
+      log('Делаю резервную копию мира перед запуском…');
+      const b = await backup.create(dir, 'auto');
+      if (b) log(`Копия сохранена: ${b.file} (${fmtSize(b.size)}).`);
+      send('backups', { dir });
+    }
   } catch (e) {
     current = null;
     setState('stopped');
@@ -181,6 +195,12 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   ];
   child = spawn(java.path, args, { cwd: dir, windowsHide: true });
   const proc = child;
+  startedAt = Date.now();
+  lastBackupAt = Date.now();
+  online = new Set();
+  maxPlayers = Number(core.readProps(dir)['max-players']) || 20;
+  sendPlayers();
+  stopMonitor = startMonitor(proc.pid, (s) => send('stats', { ...s, ramGb: java.bits === 32 ? 1 : ram, players: online.size, uptime: Date.now() - startedAt }));
 
   const pipe = (stream, kind) => {
     let buf = '';
@@ -214,6 +234,11 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
     const stoppedByUser = state === 'stopping';
     child = null;
     current = null;
+    stopMonitor();
+    stopMonitor = () => {};
+    online = new Set();
+    sendPlayers();
+    for (const w of logWaiters.splice(0)) w.reject(new Error('Сервер остановился'));
     log(`Сервер остановлен (код ${code === null ? '—' : code}).`, code ? 'error' : 'info');
     // Остановился сам с ошибкой — объясняем, что случилось.
     if (code && !stoppedByUser) {
@@ -278,7 +303,53 @@ function flushIssues() {
   return error;
 }
 
+/** Размер файла по-человечески: «850 КБ», «1,2 МБ». */
+const fmtSize = (b) => (b >= 1024 * 1024 ? (b / 1024 / 1024).toFixed(1).replace(".", ",") + " МБ" : Math.max(1, Math.round(b / 1024)) + " КБ");
+
+// ---- игроки онлайн, ожидание строк журнала ----
+
+let online = new Set();
+let maxPlayers = 20;
+let startedAt = 0;
+let stopMonitor = () => {};
+const logWaiters = []; // { re, resolve, reject, timer }
+
+function sendPlayers() {
+  send('players', { online: [...online], max: maxPlayers, running: !!child, server: current });
+}
+
+/** Дождаться строки журнала, подходящей под re (например, «Saved the game»). */
+function waitForLog(re, ms) {
+  return new Promise((resolve, reject) => {
+    const w = { re, resolve, reject };
+    w.timer = setTimeout(() => {
+      const i = logWaiters.indexOf(w);
+      if (i >= 0) logWaiters.splice(i, 1);
+      reject(new Error('Сервер не ответил'));
+    }, ms);
+    logWaiters.push(w);
+  });
+}
+
 function addLogLine(line) {
+  const ev = players.parseLine(line);
+  if (ev) {
+    if (ev.join) online.add(ev.join);
+    if (ev.leave) online.delete(ev.leave);
+    if (ev.list) {
+      online = new Set(ev.list.names);
+      maxPlayers = ev.list.max;
+    }
+    sendPlayers();
+  }
+  for (let i = logWaiters.length - 1; i >= 0; i--) {
+    const w = logWaiters[i];
+    if (w.re.test(line)) {
+      clearTimeout(w.timer);
+      logWaiters.splice(i, 1);
+      w.resolve(line);
+    }
+  }
   logLines.push(line);
   if (logLines.length > MAX_LOG) {
     const drop = logLines.length - MAX_LOG;
@@ -321,6 +392,267 @@ handle('loaders:list', ({ type, version }) => core.listLoaders(type, version));
 handle('java:list', async ({ refresh }) =>
   (await core.findJavas(!!refresh)).map(({ path: p, major, bits, text }) => ({ path: p, major, bits, text }))
 );
+let javaInstalling = false;
+handle('java:install', async ({ need }) => {
+  if (javaInstalling) throw new Error('Java уже устанавливается');
+  javaInstalling = true;
+  const major = core.javaToInstall(Number(need) || null);
+  let lastSent = 0;
+  try {
+    const exe = await core.installJava(major, {
+      onLog: (text) => send('java:progress', { text }),
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastSent > 150 || done === total) {
+          lastSent = now;
+          send('java:progress', { done, total });
+        }
+      },
+    });
+    return { major, exe };
+  } finally {
+    javaInstalling = false;
+  }
+});
+// ---- резервные копии и расписание ----
+
+let lastBackupAt = 0;
+let backupBusy = false;
+let lastRestartKey = '';
+const warned = new Set();
+const isCurrent = (type, version) => !!current && current.type === type && current.version === version;
+const runCmd = (text) => {
+  if (child) child.stdin.write(text + '\n');
+};
+
+/** Копия мира; если сервер работает — сначала просим его всё сохранить и временно не писать на диск. */
+async function makeBackup(dir, reason, running) {
+  if (backupBusy) throw new Error('Копия уже делается');
+  backupBusy = true;
+  try {
+    if (running) {
+      runCmd('save-off');
+      runCmd('save-all flush');
+      await waitForLog(/Saved the game|Saved the world|ThreadedAnvilChunkStorage.*All chunks are saved/i, 60000).catch(() => {
+        log('Сервер не подтвердил сохранение — копия может отстать на несколько секунд.', 'error');
+      });
+    }
+    log(`Делаю резервную копию мира (${backup.REASONS[reason]})…`);
+    const b = await backup.create(dir, reason);
+    if (b) log(`Копия сохранена: ${b.file} (${fmtSize(b.size)}).`);
+    else log('Мира ещё нет — копировать нечего.');
+    lastBackupAt = Date.now();
+    send('backups', { dir });
+    return b;
+  } finally {
+    if (running) runCmd('save-on');
+    backupBusy = false;
+  }
+}
+
+// Раз в 15 секунд: копии по расписанию и ежедневный перезапуск.
+setInterval(() => {
+  if (!child || state !== 'running' || !current) return;
+  const dir = serverDir(current.type, current.version);
+  const s = backup.readSettings(dir);
+  if (s.backup.everyHours > 0 && !backupBusy && Date.now() - lastBackupAt >= s.backup.everyHours * 3600 * 1000) {
+    makeBackup(dir, 'schedule', true).catch((e) => log(e.message, 'error'));
+  }
+  if (!s.restart.enabled) return;
+  const [h, m] = s.restart.time.split(':').map(Number);
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+  const key = target.toDateString() + s.restart.time;
+  const left = target - now;
+  if (lastRestartKey === key || startedAt > target.getTime() - 60 * 1000) return;
+  if (left <= 5 * 60 * 1000 && left > 60 * 1000 && !warned.has(key + '5')) {
+    warned.add(key + '5');
+    const mins = Math.ceil(left / 60000);
+    runCmd(`say Сервер перезапустится через ${mins} ${mins === 5 ? 'минут' : 'минуты'}`);
+  } else if (left <= 60 * 1000 && left > 0 && !warned.has(key + '1')) {
+    warned.add(key + '1');
+    runCmd('say Сервер перезапустится через 1 минуту');
+  } else if (left <= 0 && left > -3 * 60 * 1000) {
+    lastRestartKey = key;
+    log(`Плановый перезапуск (${s.restart.time})…`);
+    restartPending = true;
+    stopServer();
+  }
+}, 15000);
+
+handle('maint:get', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  return { settings: backup.readSettings(dir), backups: backup.list(dir), hasWorld: backup.worldDirs(dir).length > 0 };
+});
+handle('maint:set', ({ type, version, settings }) => backup.writeSettings(serverDir(type, version), settings || {}));
+handle('backup:create', ({ type, version }) => makeBackup(serverDir(type, version), 'manual', isCurrent(type, version) && state === 'running'));
+handle('backup:restore', async ({ type, version, file }) => {
+  if (isCurrent(type, version)) throw new Error('Остановите сервер перед восстановлением мира');
+  const dir = serverDir(type, version);
+  const r = await backup.restore(dir, file);
+  send('backups', { dir });
+  return r;
+});
+handle('backup:delete', async ({ type, version, file }) => {
+  await shell.trashItem(backup.backupPath(serverDir(type, version), file));
+});
+handle('backup:reveal', ({ type, version, file }) => {
+  const dir = serverDir(type, version);
+  if (file) shell.showItemInFolder(backup.backupPath(dir, file));
+  else {
+    fs.mkdirSync(path.join(dir, 'backups'), { recursive: true });
+    shell.openPath(path.join(dir, 'backups'));
+  }
+});
+
+// ---- игроки ----
+
+handle('players:get', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const props = core.readProps(dir);
+  return {
+    lists: players.readLists(dir),
+    online: isCurrent(type, version) ? [...online] : [],
+    max: Number(props['max-players']) || 20,
+    running: isCurrent(type, version) && state === 'running',
+    whitelistOn: props['white-list'] === 'true',
+    onlineMode: props['online-mode'] !== 'false',
+  };
+});
+handle('players:action', async ({ type, version, list, action, value, reason }) => {
+  const dir = serverDir(type, version);
+  const v = String(value || '').trim();
+  const live = isCurrent(type, version) && state === 'running';
+  if (list === 'kick') {
+    if (!live) throw new Error('Сервер не запущен');
+    if (!players.NAME_RE.test(v)) throw new Error('Некорректный ник');
+    runCmd(`kick ${v}${reason ? ' ' + String(reason).replace(/[\r\n]/g, ' ').slice(0, 200) : ''}`);
+    return { live };
+  }
+  if (list === 'whitelist-toggle') {
+    const on = action === 'on';
+    if (live) runCmd(`whitelist ${on ? 'on' : 'off'}`);
+    core.writeProps(dir, { 'white-list': on ? 'true' : 'false', 'enforce-whitelist': on ? 'true' : 'false' });
+    return { live };
+  }
+  if (live) {
+    runCmd(players.commandFor(list, action, v, reason));
+    await new Promise((r) => setTimeout(r, 1200)); // сервер сразу записывает файл
+    return { live };
+  }
+  await players.editOffline(dir, list, action, v, { reason, onlineMode: core.readProps(dir)['online-mode'] !== 'false' });
+  return { live };
+});
+
+// ---- сервер из сборки .mrpack ----
+
+let pendingPack = null;
+handle('mrpack:open', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Сборка Modrinth для сервера',
+    filters: [{ name: 'Сборка Modrinth', extensions: ['mrpack'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  mrpack.cleanup(pendingPack);
+  pendingPack = await mrpack.read(r.filePaths[0]);
+  const p = pendingPack;
+  const dir = serverDir(p.type, p.mc);
+  const hasMods = fs.existsSync(path.join(dir, 'mods')) && fs.readdirSync(path.join(dir, 'mods')).length > 0;
+  return {
+    name: p.name, packVersion: p.packVersion, mc: p.mc, type: p.type, loader: p.loader,
+    mods: p.files.length, skipped: p.skipped.length, bad: p.bad.length, checked: p.checked,
+    exists: !!core.readInstall(dir) || hasMods, hasMods,
+  };
+});
+handle('mrpack:cancel', () => {
+  mrpack.cleanup(pendingPack);
+  pendingPack = null;
+});
+handle('mrpack:apply', async () => {
+  const p = pendingPack;
+  if (!p) throw new Error('Сначала выберите файл сборки');
+  if (isCurrent(p.type, p.mc)) throw new Error('Остановите сервер этой версии перед установкой сборки');
+  pendingPack = null;
+  const dir = serverDir(p.type, p.mc);
+  if (backup.worldDirs(dir).length) await backup.create(dir, 'before-pack');
+  log(`Ставлю сборку «${p.name}»: ${p.files.length} модов для сервера…`);
+  const r = await mrpack.apply(p, dir, {
+    onLog: (t) => log(t),
+    onProgress: (done, total) => send('progress', { got: done, total }),
+  });
+  log(`Сборка установлена. Осталось нажать «Запустить» — лаунчер поставит ${p.type} ${p.loader} для Minecraft ${p.mc}.`);
+  return { type: p.type, mc: p.mc, loader: p.loader, ...r };
+});
+
+// ---- оформление: светлая, тёмная или как в Windows ----
+
+const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
+function readUi() {
+  try {
+    return JSON.parse(fs.readFileSync(UI_FILE(), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+const themeBackground = () => (nativeTheme.shouldUseDarkColors ? '#15171b' : '#f6f4ef');
+// Тема задаётся до создания окна — так страница сразу открывается в нужных цветах, без вспышки.
+nativeTheme.themeSource = ['light', 'dark', 'system'].includes(readUi().theme) ? readUi().theme : 'system';
+handle('ui:getTheme', () => nativeTheme.themeSource);
+handle('ui:setTheme', ({ theme }) => {
+  if (!['light', 'dark', 'system'].includes(theme)) throw new Error('Неизвестная тема');
+  nativeTheme.themeSource = theme;
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), theme }), 'utf8');
+  if (win) win.setBackgroundColor(themeBackground());
+  return theme;
+});
+
+// ---- список серверов: все папки вида <тип>-<версия> ----
+
+handle('servers:list', () => {
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of dirs) {
+    const m = n.match(/^([a-z]+)-(.+)$/);
+    if (!m || !core.TYPES.includes(m[1])) continue;
+    try {
+      core.checkArgs(m[1], m[2]);
+    } catch {
+      continue;
+    }
+    const dir = path.join(ROOT, n);
+    const installed = !!core.readInstall(dir);
+    if (!installed && !backup.worldDirs(dir).length && !fs.existsSync(path.join(dir, 'mods'))) continue;
+    let packName = null;
+    try {
+      packName = JSON.parse(fs.readFileSync(path.join(dir, 'mcl-pack.json'), 'utf8')).name || null;
+    } catch {
+      /* не из сборки */
+    }
+    let lastPlayed = null;
+    try {
+      lastPlayed = fs.statSync(path.join(dir, 'logs', 'latest.log')).mtimeMs;
+    } catch {
+      /* ещё не запускался */
+    }
+    out.push({
+      type: m[1],
+      version: m[2],
+      name: backup.readSettings(dir).name || packName || null,
+      installed,
+      running: isCurrent(m[1], m[2]) && state !== 'stopped',
+      lastPlayed,
+    });
+  }
+  return out.sort((a, b) => Number(b.running) - Number(a.running) || (b.lastPlayed || 0) - (a.lastPlayed || 0));
+});
+
 handle('net:addresses', () => localAddresses());
 handle('app:info', () => ({ root: ROOT, addresses: localAddresses(), state, current, memory: memoryInfo() }));
 handle('server:info', async ({ type, version }) => {
@@ -330,6 +662,7 @@ handle('server:info', async ({ type, version }) => {
     dir,
     installed: !!inst,
     installedLoader: inst ? inst.loader || null : null,
+    packLoader: mrpack.packLoader(dir),
     eula: core.eulaAccepted(dir),
     props: core.readProps(dir),
     javaNeeded: await core.requiredJava(version),
@@ -385,6 +718,93 @@ handle('mods:install', async ({ type, version, projectId, kind, loader }) => {
     modBusy = false;
   }
 });
+// ---- сборка модов для игроков ----
+
+const packCache = new Map(); // папка mods → { items, at }
+
+handle('pack:analyze', async ({ type, version }) => {
+  if (!mods.kindsFor(type).includes('mod')) {
+    throw new Error(type === 'paper' ? 'На Paper игрокам ничего ставить не нужно — плагины работают только на сервере' : 'У этого сервера нет модов');
+  }
+  const dir = serverDir(type, version);
+  const modsDir = path.join(dir, 'mods');
+  const items = await pack.analyze(modsDir);
+  packCache.set(modsDir, { items, at: Date.now() });
+  const inst = core.readInstall(dir);
+  const loader = await core.clientLoader(type, version, inst && inst.loader);
+  // Варианты адреса для списка «Сетевая игра»: VPS и адреса компьютера.
+  const props = core.readProps(dir);
+  const portSuffix = props['server-port'] && props['server-port'] !== '25565' ? ':' + props['server-port'] : '';
+  const addresses = [];
+  try {
+    if (vpsApi || safeStorage.isEncryptionAvailable()) {
+      for (const v of vps().list()) addresses.push({ label: `VPS «${v.name}»`, address: v.host + portSuffix });
+    }
+  } catch {
+    /* без VPS */
+  }
+  for (const a of localAddresses()) addresses.push({ label: `${a.name}${a.vpn ? ' (VPN)' : ''}`, address: a.address + portSuffix });
+  return {
+    items: items.map(({ sha512, ...rest }) => rest),
+    loader,
+    hasConfig: fs.existsSync(path.join(dir, 'config')),
+    addresses,
+    installed: !!inst,
+  };
+});
+
+handle('pack:export', async ({ type, version, files, format, name, packVersion, address, includeConfig }) => {
+  const dir = serverDir(type, version);
+  const modsDir = path.join(dir, 'mods');
+  let cached = packCache.get(modsDir);
+  if (!cached || Date.now() - cached.at > 10 * 60 * 1000) {
+    cached = { items: await pack.analyze(modsDir), at: Date.now() };
+    packCache.set(modsDir, cached);
+  }
+  const wanted = new Set(Array.isArray(files) ? files : []);
+  const items = cached.items.filter((i) => wanted.has(i.file));
+  if (!items.length) throw new Error('Не выбран ни один мод');
+  const fmt = format === 'zip' ? 'zip' : 'mrpack';
+  const title = String(name || '').trim().slice(0, 80) || `Сервер ${version}`;
+  const ver = /^[\w.+-]{1,32}$/.test(String(packVersion || '')) ? packVersion : '1.0.0';
+  const addr = String(address || '').trim();
+  if (addr && !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(addr)) throw new Error('Адрес сервера указан неверно');
+
+  const safe = title.replace(/[\\/:*?"<>|]+/g, '').trim() || 'modpack';
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Сохранить сборку для игроков',
+    defaultPath: path.join(app.getPath('desktop'), `${safe} ${ver}.${fmt}`),
+    filters: fmt === 'zip' ? [{ name: 'Архив ZIP', extensions: ['zip'] }] : [{ name: 'Сборка Modrinth', extensions: ['mrpack'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  const inst = core.readInstall(dir);
+  const res = pack.build({
+    format: fmt,
+    items,
+    modsDir,
+    configDir: path.join(dir, 'config'),
+    includeConfig: !!includeConfig,
+    name: title,
+    packVersion: ver,
+    mc: version,
+    loader: await core.clientLoader(type, version, inst && inst.loader),
+    server: addr ? { name: title, address: addr } : null,
+    outFile: r.filePath,
+  });
+  return { path: r.filePath, ...res };
+});
+handle('pack:reveal', ({ path: p }) => {
+  if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p);
+});
+
+handle('mods:checkUpdates', ({ type, version, kind, loader }) =>
+  mods.checkUpdates({ type, mc: version, dir: serverDir(type, version), kind, flavor: flavorFor(type, version, loader) })
+);
+handle('mods:update', async ({ type, version, kind, loader, file }) => {
+  if (isCurrent(type, version)) throw new Error('Остановите сервер, чтобы обновить моды и плагины: пока он работает, файлы заняты');
+  return mods.updateFile({ type, mc: version, dir: serverDir(type, version), kind, flavor: flavorFor(type, version, loader), file, onLog: log });
+});
+
 handle('mods:remove', async ({ type, version, file, kind }) => {
   const dir = serverDir(type, version);
   const p = mods.modPath(type, dir, String(file || ''), kind);
@@ -549,7 +969,7 @@ function createWindow() {
     height: 760,
     minWidth: 900,
     minHeight: 580,
-    backgroundColor: '#14171c',
+    backgroundColor: themeBackground(),
     autoHideMenuBar: true,
     title: 'Лаунчер сервера Minecraft',
     webPreferences: {

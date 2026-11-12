@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src https://cdn.modrinth.com">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src https://cdn.modrinth.com">
   <title>Лаунчер сервера Minecraft</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -10,128 +10,28 @@
   <aside class="side">
     <header class="brand">
       <div class="cube" aria-hidden="true"></div>
-      <div>
-        <h1>Сервер Minecraft</h1>
-        <p id="status" class="status" data-state="stopped">Остановлен</p>
-      </div>
+      <b>Сервер Minecraft</b>
     </header>
 
-    <section class="card">
-      <h2>Сервер</h2>
-      <label class="field">
-        <span>Тип</span>
-        <select id="type">
-          <optgroup label="Без модов">
-            <option value="vanilla">Vanilla — официальный</option>
-            <option value="paper">Paper — с плагинами</option>
-          </optgroup>
-          <optgroup label="С модами">
-            <option value="fabric">Fabric</option>
-            <option value="forge">Forge</option>
-            <option value="neoforge">NeoForge</option>
-          </optgroup>
-          <optgroup label="Моды + плагины (гибриды)">
-            <option value="youer">Youer — на NeoForge</option>
-            <option value="arclight">Arclight — на любом загрузчике</option>
-            <option value="mohist">Mohist — на Forge</option>
-          </optgroup>
-        </select>
-      </label>
-      <p class="hint" id="type-hint"></p>
-      <label class="field">
-        <span>Версия игры</span>
-        <select id="version"></select>
-      </label>
-      <label class="field" id="loader-row" hidden>
-        <span id="loader-label">Версия загрузчика</span>
-        <select id="loader"></select>
-      </label>
-      <label class="check">
-        <input type="checkbox" id="pre">
-        <span>Показывать тестовые версии</span>
-      </label>
-      <p class="hint" id="version-hint"></p>
-    </section>
+    <div class="side-group" id="srv-group">Ваши серверы</div>
+    <nav id="srv-list" class="srv-list" aria-label="Ваши серверы"></nav>
+    <button type="button" id="srv-new" class="srv-row srv-new"><span class="plus" aria-hidden="true">+</span>Новый сервер</button>
 
-    <section class="card">
-      <h2>Запуск</h2>
-      <div class="grid">
-        <label class="field">
-          <span>Память, ГБ</span>
-          <input type="number" id="ram" min="1" max="64" step="1" value="2" inputmode="numeric">
-        </label>
-        <label class="field">
-          <span>Java</span>
-          <select id="java"></select>
-        </label>
+    <div class="side-bottom">
+      <div class="theme">
+        <span class="theme-label" id="theme-label">Тема</span>
+        <div class="seg seg-full" role="radiogroup" aria-labelledby="theme-label">
+          <button type="button" class="seg-btn" role="radio" data-theme="light">Светлая</button>
+          <button type="button" class="seg-btn" role="radio" data-theme="dark">Тёмная</button>
+          <button type="button" class="seg-btn" role="radio" data-theme="system" title="Как в Windows">Авто</button>
+        </div>
       </div>
-      <p class="hint" id="ram-hint"></p>
-      <p class="hint" id="java-hint"></p>
-      <label class="check" id="eula-row">
-        <input type="checkbox" id="eula">
-        <span>Я принимаю <a href="#" id="eula-link">лицензионное соглашение Minecraft</a></span>
-      </label>
-      <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
-      <div class="row">
-        <button type="button" id="start" class="btn primary">Запустить</button>
-        <button type="button" id="stop" class="btn danger" disabled>Остановить</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>Настройки сервера</h2>
-      <label class="field">
-        <span>IP сервера</span>
-        <select id="p-ip"></select>
-      </label>
-      <p class="hint" id="ip-hint"></p>
-      <div class="grid">
-        <label class="field">
-          <span>Порт</span>
-          <input type="number" id="p-port" min="1" max="65535">
-        </label>
-        <label class="field">
-          <span>Игроков</span>
-          <input type="number" id="p-players" min="1" max="1000">
-        </label>
-        <label class="field">
-          <span>Режим</span>
-          <select id="p-gamemode">
-            <option value="survival">Выживание</option>
-            <option value="creative">Творческий</option>
-            <option value="adventure">Приключение</option>
-            <option value="spectator">Наблюдатель</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Сложность</span>
-          <select id="p-difficulty">
-            <option value="peaceful">Мирная</option>
-            <option value="easy">Лёгкая</option>
-            <option value="normal">Нормальная</option>
-            <option value="hard">Сложная</option>
-          </select>
-        </label>
-      </div>
-      <label class="field">
-        <span>Описание в списке серверов</span>
-        <input type="text" id="p-motd" maxlength="120">
-      </label>
-      <label class="check">
-        <input type="checkbox" id="p-online">
-        <span>Пускать только лицензионные аккаунты</span>
-      </label>
-      <div class="row">
-        <button type="button" id="save" class="btn">Сохранить</button>
-        <button type="button" id="folder" class="btn">Папка сервера</button>
-      </div>
-      <p class="hint" id="props-hint"></p>
-    </section>
-
-    <footer class="side-foot">
-      <span id="app-version"></span>
-      <button type="button" id="check-updates" class="link-btn" hidden>Проверить обновления</button>
-    </footer>
+      <footer class="side-foot">
+        <span id="app-version"></span>
+        <button type="button" id="check-updates" class="link-btn" hidden>Проверить обновления</button>
+      </footer>
+      <p class="notice">Неофициальная программа. Не связана с Mojang Studios и Microsoft. Minecraft — товарный знак Mojang Studios.</p>
+    </div>
   </aside>
 
   <main class="main">
@@ -148,17 +48,137 @@
       <div id="update-notes" class="update-notes" hidden></div>
     </div>
 
-    <div class="topbar">
-      <div class="tabs" role="tablist">
-        <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
-        <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
-        <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
-        <button type="button" class="tab" role="tab" id="tab-vps" data-tab="vps">VPS</button>
+    <!-- Мастер создания сервера -->
+    <section id="wizard" class="wizard" hidden aria-labelledby="wz-title">
+      <ol class="steps" aria-label="Шаги">
+        <li class="step" data-step="1"><span class="n">1</span>Какой сервер</li>
+        <li class="bar" aria-hidden="true"></li>
+        <li class="step" data-step="2"><span class="n">2</span>Версия игры</li>
+        <li class="bar" aria-hidden="true"></li>
+        <li class="step" data-step="3"><span class="n">3</span>Запуск</li>
+      </ol>
+
+      <div class="wz-page" data-page="1">
+        <h1 id="wz-title">Какой сервер нужен?</h1>
+        <p class="lead">Выберите, во что будете играть. Остальное лаунчер подберёт сам — Java, файлы сервера и настройки.</p>
+        <div class="choices" role="radiogroup" aria-label="Тип сервера">
+          <button type="button" class="choice" role="radio" data-kind="vanilla">
+            <span class="radio" aria-hidden="true"></span>
+            <span class="choice-title">Обычный</span>
+            <span class="choice-text">Чистый Minecraft, как в одиночной игре. Игрокам ничего не нужно ставить.</span>
+            <span class="choice-who">Подойдёт, <span>если просто хотите играть с друзьями</span></span>
+          </button>
+          <button type="button" class="choice" role="radio" data-kind="paper">
+            <span class="radio" aria-hidden="true"></span>
+            <span class="rec">Чаще всего выбирают</span>
+            <span class="choice-title">С плагинами</span>
+            <span class="choice-text">Быстрый сервер Paper: приваты, экономика, мини-игры. У игроков обычный Minecraft.</span>
+            <span class="choice-who">Подойдёт, <span>если нужны правила, защита построек и команды</span></span>
+          </button>
+          <button type="button" class="choice" role="radio" data-kind="mods">
+            <span class="radio" aria-hidden="true"></span>
+            <span class="choice-title">С модами</span>
+            <span class="choice-text">Новые блоки, механизмы и миры. Игрокам нужны те же моды — лаунчер соберёт их в один файл.</span>
+            <span class="choice-who">Подойдёт, <span>если играете в сборку</span></span>
+          </button>
+        </div>
+        <div class="flavors" id="wz-flavors" hidden>
+          <span class="flavors-label">Загрузчик модов</span>
+          <div class="seg" role="radiogroup" aria-label="Загрузчик модов">
+            <button type="button" class="seg-btn" role="radio" data-flavor="fabric">Fabric</button>
+            <button type="button" class="seg-btn" role="radio" data-flavor="forge">Forge</button>
+            <button type="button" class="seg-btn" role="radio" data-flavor="neoforge">NeoForge</button>
+          </div>
+          <span class="flavors-label">или моды и плагины вместе</span>
+          <div class="seg" role="radiogroup" aria-label="Моды и плагины вместе">
+            <button type="button" class="seg-btn" role="radio" data-flavor="youer">Youer</button>
+            <button type="button" class="seg-btn" role="radio" data-flavor="arclight">Arclight</button>
+            <button type="button" class="seg-btn" role="radio" data-flavor="mohist">Mohist</button>
+          </div>
+        </div>
+        <p class="hint" id="type-hint"></p>
+        <div class="wz-foot">
+          <span class="hint-line">Есть готовая сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button></span>
+          <button type="button" class="btn big ghost" data-wz="cancel">Отмена</button>
+          <button type="button" class="btn big primary" data-wz="next">Дальше</button>
+        </div>
       </div>
-      <span id="address" class="address"></span>
-    </div>
+
+      <div class="wz-page" data-page="2" hidden>
+        <h1>Какая версия игры?</h1>
+        <p class="lead">Версия сервера должна совпадать с версией Minecraft у игроков. Не знаете — оставьте самую новую.</p>
+        <div class="wz-slot" id="wz-version-slot"></div>
+        <div class="wz-foot">
+          <button type="button" class="btn big ghost" data-wz="back">Назад</button>
+          <button type="button" class="btn big primary" data-wz="next">Дальше</button>
+        </div>
+      </div>
+
+      <div class="wz-page" data-page="3" hidden>
+        <h1>Почти готово</h1>
+        <p class="lead" id="wz-summary"></p>
+        <div class="wz-slot">
+          <label class="field">
+            <span>Название (видите только вы)</span>
+            <input type="text" id="wz-name" maxlength="60" placeholder="Например: Выживание с друзьями">
+          </label>
+          <div id="wz-launch-slot"></div>
+          <div id="wz-eula-slot"></div>
+          <p class="hint" id="wz-hint"></p>
+        </div>
+        <div class="wz-foot">
+          <button type="button" class="btn big ghost" data-wz="back">Назад</button>
+          <button type="button" id="wz-create" class="btn big primary">Создать и запустить</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Выбранный сервер -->
+    <section id="server" class="server">
+      <header class="srv-head">
+        <div class="srv-title">
+          <h1 id="srv-name"></h1>
+          <div class="srv-sub">
+            <span id="status" class="status" data-state="stopped">Остановлен</span>
+            <span id="srv-meta" class="meta"></span>
+          </div>
+        </div>
+        <div class="srv-actions">
+          <button type="button" id="stop" class="btn big" disabled>Остановить</button>
+          <button type="button" id="start" class="btn big primary">Запустить</button>
+        </div>
+      </header>
+      <div id="address" class="address" hidden></div>
+      <div id="home-eula">
+        <label class="check eula" id="eula-row">
+          <input type="checkbox" id="eula">
+          <span>Я принимаю <a href="#" id="eula-link">лицензионное соглашение Minecraft</a> — без этого сервер не запустится</span>
+        </label>
+      </div>
+      <p class="hint" id="start-hint"></p>
+      <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
+
+      <div class="topbar">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
+          <button type="button" class="tab" role="tab" id="tab-players" data-tab="players">Игроки</button>
+          <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
+          <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
+          <button type="button" class="tab" role="tab" id="tab-maint" data-tab="maint">Обслуживание</button>
+          <button type="button" class="tab" role="tab" id="tab-settings" data-tab="settings">Настройки</button>
+          <button type="button" class="tab" role="tab" id="tab-vps" data-tab="vps">VPS</button>
+        </div>
+      </div>
 
     <section id="view-console" class="view" role="tabpanel" aria-labelledby="tab-console">
+      <div id="stats" class="stats" hidden>
+        <div class="stat"><span class="stat-label">Процессор</span><b id="st-cpu">—</b></div>
+        <div class="stat"><span class="stat-label">Память сервера</span><b id="st-mem">—</b></div>
+        <div class="stat"><span class="stat-label">Свободно в ПК</span><b id="st-sys">—</b></div>
+        <div class="stat"><span class="stat-label">Игроки</span><b id="st-players">—</b></div>
+        <div class="stat"><span class="stat-label">Работает</span><b id="st-uptime">—</b></div>
+        <canvas id="st-chart" class="stat-chart" width="260" height="44" role="img" aria-label="График загрузки за последние минуты"></canvas>
+      </div>
       <div id="issues" class="issues" hidden>
         <div class="issues-head">
           <b id="issues-title">Что случилось</b>
@@ -188,6 +208,7 @@
           <div class="seg" role="tablist">
             <button type="button" class="seg-btn" data-mview="search" role="tab">Найти</button>
             <button type="button" class="seg-btn" data-mview="installed" role="tab" id="mview-installed">Установленные</button>
+            <button type="button" class="seg-btn" data-mview="pack" role="tab" id="mview-pack">Сборка для игроков</button>
           </div>
           <p class="hint" id="mods-hint"></p>
         </div>
@@ -205,9 +226,46 @@
         <div id="mods-installed" class="mods-pane" hidden>
           <div class="row-between">
             <p class="hint" id="installed-hint"></p>
-            <button type="button" id="mods-folder" class="btn small">Открыть папку</button>
+            <div class="row">
+              <button type="button" id="mods-upd-check" class="btn small">Проверить обновления</button>
+              <button type="button" id="mods-upd-all" class="btn small primary" hidden>Обновить все</button>
+              <button type="button" id="mods-folder" class="btn small">Открыть папку</button>
+            </div>
           </div>
           <div id="installed" class="list"></div>
+        </div>
+
+        <div id="mods-pack" class="mods-pane" hidden>
+          <div class="pack-scroll">
+            <p class="hint">Игрокам нужны те же моды, что и на сервере, кроме модов только для сервера. Лаунчер сам определит, какие моды нужны игрокам, а вы сможете поправить выбор.</p>
+            <p class="hint" id="pack-hint"></p>
+            <div id="pack-list" class="list pack-list"></div>
+
+            <section class="card">
+              <div class="grid">
+                <label class="field"><span>Название сборки</span><input type="text" id="pack-name" maxlength="80"></label>
+                <label class="field"><span>Версия сборки</span><input type="text" id="pack-version" maxlength="32" value="1.0.0"></label>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="pack-server" checked>
+                <span>Добавить сервер в список «Сетевая игра» (только для .mrpack)</span>
+              </label>
+              <div class="row" id="pack-addr-row">
+                <select id="pack-addr-pick"></select>
+                <input type="text" id="pack-addr" placeholder="Адрес сервера, например 203.0.113.10" maxlength="120">
+              </div>
+              <label class="check">
+                <input type="checkbox" id="pack-config">
+                <span>Добавить настройки модов (папку config) — если меняли их и хотите, чтобы у игроков было так же</span>
+              </label>
+              <div class="row pack-actions">
+                <button type="button" id="pack-mrpack" class="btn primary">Сохранить .mrpack</button>
+                <button type="button" id="pack-zip" class="btn">Сохранить .zip</button>
+              </div>
+              <p class="hint"><b>.mrpack</b> — открывается в Modrinth App, Prism Launcher, ATLauncher: игра, загрузчик и моды ставятся одной кнопкой. <b>.zip</b> — для официального лаунчера: внутри папка mods и инструкция.</p>
+              <p class="hint" id="pack-result"></p>
+            </section>
+          </div>
         </div>
       </div>
     </section>
@@ -256,6 +314,84 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section id="view-players" class="view" role="tabpanel" aria-labelledby="tab-players" hidden>
+      <div class="scroll-col">
+        <p class="hint" id="pl-hint"></p>
+        <section class="card">
+          <h2 id="pl-online-title">Сейчас на сервере</h2>
+          <div id="pl-online" class="chips"></div>
+        </section>
+        <div class="pl-grid">
+          <section class="card">
+            <h2>Операторы</h2>
+            <p class="hint">Могут выполнять команды сервера и не подчиняются ограничениям.</p>
+            <form class="cmd pl-add" data-list="ops"><input type="text" placeholder="Ник игрока" maxlength="17"><button type="submit" class="btn">Добавить</button></form>
+            <div class="chips" data-chips="ops"></div>
+          </section>
+          <section class="card">
+            <h2>Белый список</h2>
+            <label class="check"><input type="checkbox" id="pl-wl-on"><span>Пускать только игроков из списка</span></label>
+            <form class="cmd pl-add" data-list="whitelist"><input type="text" placeholder="Ник игрока" maxlength="17"><button type="submit" class="btn">Добавить</button></form>
+            <div class="chips" data-chips="whitelist"></div>
+          </section>
+          <section class="card">
+            <h2>Забаненные игроки</h2>
+            <form class="cmd pl-add" data-list="bans"><input type="text" placeholder="Ник игрока" maxlength="17"><input type="text" class="reason" placeholder="Причина (необязательно)" maxlength="200"><button type="submit" class="btn danger">Забанить</button></form>
+            <div class="chips" data-chips="bans"></div>
+          </section>
+          <section class="card">
+            <h2>Забаненные IP</h2>
+            <form class="cmd pl-add" data-list="ipbans"><input type="text" placeholder="IP-адрес" maxlength="45"><input type="text" class="reason" placeholder="Причина (необязательно)" maxlength="200"><button type="submit" class="btn danger">Забанить</button></form>
+            <div class="chips" data-chips="ipbans"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-maint" class="view" role="tabpanel" aria-labelledby="tab-maint" hidden>
+      <div class="scroll-col">
+        <section class="card">
+          <div class="row-between">
+            <h2>Резервные копии мира</h2>
+            <div class="row">
+              <button type="button" id="bk-folder" class="btn small">Открыть папку</button>
+              <button type="button" id="bk-now" class="btn small primary">Сделать копию сейчас</button>
+            </div>
+          </div>
+          <p class="hint" id="bk-hint"></p>
+          <div id="bk-list" class="list"></div>
+        </section>
+        <section class="card">
+          <h2>Автоматические копии</h2>
+          <label class="check"><input type="checkbox" id="bk-before"><span>Делать копию перед каждым запуском сервера</span></label>
+          <div class="grid">
+            <label class="field"><span>Копия во время работы</span>
+              <select id="bk-every">
+                <option value="0">Не делать</option>
+                <option value="1">Каждый час</option>
+                <option value="2">Каждые 2 часа</option>
+                <option value="3">Каждые 3 часа</option>
+                <option value="6">Каждые 6 часов</option>
+                <option value="12">Каждые 12 часов</option>
+                <option value="24">Раз в сутки</option>
+              </select>
+            </label>
+            <label class="field"><span>Хранить автокопий</span><input type="number" id="bk-keep" min="1" max="100"></label>
+          </div>
+          <p class="hint">Старые автоматические копии удаляются сами. Сделанные вручную — никогда.</p>
+        </section>
+        <section class="card">
+          <h2>Перезапуск по расписанию</h2>
+          <p class="hint">Раз в сутки сервер сам перезапустится: игрокам заранее придёт предупреждение за 5 и за 1 минуту. Помогает от утечек памяти и подтормаживаний у долго работающих серверов с модами.</p>
+          <div class="row mt-row">
+            <label class="check"><input type="checkbox" id="rs-on"><span>Перезапускать каждый день в</span></label>
+            <input type="time" id="rs-time" step="60">
+          </div>
+          <p class="hint" id="mt-hint"></p>
+        </section>
       </div>
     </section>
 
@@ -346,8 +482,142 @@
         </div>
       </div>
     </section>
+
+    <section id="view-settings" class="view" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="scroll-col settings">
+        <section class="card">
+          <h2>Сервер</h2>
+          <label class="field">
+            <span>Название (видите только вы)</span>
+            <input type="text" id="srv-name-input" maxlength="60" placeholder="Например: Выживание с друзьями">
+          </label>
+          <p class="hint" id="name-hint"></p>
+          <p class="hint" id="type-line"></p>
+          <div id="home-loader"></div>
+          <div class="row">
+            <button type="button" id="folder" class="btn">Открыть папку сервера</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Запуск</h2>
+          <div id="home-launch"></div>
+        </section>
+
+        <section class="card">
+          <h2>Игра на сервере</h2>
+          <label class="field">
+            <span>IP сервера</span>
+            <select id="p-ip"></select>
+          </label>
+          <p class="hint" id="ip-hint"></p>
+          <div class="grid grid-4">
+            <label class="field">
+              <span>Порт</span>
+              <input type="number" id="p-port" min="1" max="65535">
+            </label>
+            <label class="field">
+              <span>Игроков</span>
+              <input type="number" id="p-players" min="1" max="1000">
+            </label>
+            <label class="field">
+              <span>Режим</span>
+              <select id="p-gamemode">
+                <option value="survival">Выживание</option>
+                <option value="creative">Творческий</option>
+                <option value="adventure">Приключение</option>
+                <option value="spectator">Наблюдатель</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Сложность</span>
+              <select id="p-difficulty">
+                <option value="peaceful">Мирная</option>
+                <option value="easy">Лёгкая</option>
+                <option value="normal">Нормальная</option>
+                <option value="hard">Сложная</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Описание в списке серверов</span>
+            <input type="text" id="p-motd" maxlength="120">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="p-online">
+            <span>Пускать только лицензионные аккаунты</span>
+          </label>
+          <div class="row">
+            <button type="button" id="save" class="btn primary">Сохранить</button>
+          </div>
+          <p class="hint" id="props-hint"></p>
+        </section>
+      </div>
+    </section>
+    </section>
   </main>
 
-  <script src="renderer.js"></script>
+  <!-- Поля, которые переезжают между мастером и вкладкой «Настройки». -->
+  <div id="holder" hidden>
+    <select id="type" tabindex="-1" aria-hidden="true">
+      <option value="vanilla">Vanilla</option>
+      <option value="paper">Paper</option>
+      <option value="fabric">Fabric</option>
+      <option value="forge">Forge</option>
+      <option value="neoforge">NeoForge</option>
+      <option value="youer">Youer</option>
+      <option value="arclight">Arclight</option>
+      <option value="mohist">Mohist</option>
+    </select>
+
+    <div id="version-block" class="stack">
+      <label class="field">
+        <span>Версия игры</span>
+        <select id="version" class="big"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="pre">
+        <span>Показывать тестовые версии</span>
+      </label>
+      <p class="hint" id="version-hint"></p>
+    </div>
+
+    <label class="field" id="loader-row" hidden>
+      <span id="loader-label">Версия загрузчика</span>
+      <select id="loader"></select>
+    </label>
+
+    <div id="launch-block" class="stack">
+      <div class="grid">
+        <label class="field">
+          <span>Память, ГБ</span>
+          <input type="number" id="ram" min="1" max="64" step="1" value="2" inputmode="numeric">
+        </label>
+        <label class="field">
+          <span>Java</span>
+          <select id="java"></select>
+        </label>
+      </div>
+      <p class="hint" id="ram-hint"></p>
+      <p class="hint" id="java-hint"></p>
+    </div>
+  </div>
+
+  <script src="js/00-base.js"></script>
+  <script src="js/10-render.js"></script>
+  <script src="js/20-mods.js"></script>
+  <script src="js/21-pack.js"></script>
+  <script src="js/30-configs.js"></script>
+  <script src="js/40-issues.js"></script>
+  <script src="js/45-stats.js"></script>
+  <script src="js/46-players.js"></script>
+  <script src="js/47-maint.js"></script>
+  <script src="js/48-mrpack.js"></script>
+  <script src="js/50-vps.js"></script>
+  <script src="js/60-updates.js"></script>
+  <script src="js/70-data.js"></script>
+  <script src="js/80-events.js"></script>
+  <script src="js/90-shell.js"></script>
+  <script src="js/99-start.js"></script>
 </body>
 </html>

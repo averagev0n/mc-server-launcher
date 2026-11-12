@@ -1,0 +1,31 @@
+# Автоматическая проверка при каждом изменении: синтаксис всех файлов и автотесты.
+name: Проверка
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Установка зависимостей
+        run: npm ci
+        env:
+          # Сам Electron для тестов не нужен — не качаем его.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Проверка синтаксиса
+        shell: bash
+        run: for f in main.js preload.js lib/*.js renderer/js/*.js scripts/*.js test/*.js; do node --check "$f" || exit 1; done
+
+      - name: Автотесты
+        run: npm test

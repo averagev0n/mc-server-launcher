@@ -94,10 +94,11 @@ execSync('npx electron-builder --win --publish never', { cwd: ROOT, stdio: 'inhe
 
 const dist = path.join(ROOT, 'dist');
 const files = [
-  `MC-Server-Launcher-Setup-${version}.exe`,
-  `MC-Server-Launcher-Setup-${version}.exe.blockmap`,
+  'MC-Server-Launcher-Setup.exe',
+  'MC-Server-Launcher-Setup.exe.blockmap',
   'latest.yml', // по нему установленная версия узнаёт об обновлении
-  `MC-Server-Launcher-Portable-${version}.exe`,
+  // Имена без номера версии — тогда прямая ссылка на «последнюю версию» не устаревает.
+  'MC-Server-Launcher-Portable.exe',
 ].map((f) => path.join(dist, f));
 for (const f of files) if (!fs.existsSync(f)) fail(`После сборки не найден файл ${path.basename(f)}`);
 

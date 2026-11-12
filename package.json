@@ -12,7 +12,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win --publish never",
-    "release": "node scripts/release.js"
+    "release": "node scripts/release.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "build": {
     "appId": "local.mcserverlauncher",
@@ -61,10 +62,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Сервер Minecraft",
-      "artifactName": "MC-Server-Launcher-Setup-${version}.${ext}"
+      "artifactName": "MC-Server-Launcher-Setup.${ext}"
     },
     "portable": {
-      "artifactName": "MC-Server-Launcher-Portable-${version}.${ext}"
+      "artifactName": "MC-Server-Launcher-Portable.${ext}"
     }
   },
   "devDependencies": {

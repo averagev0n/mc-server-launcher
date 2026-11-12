@@ -4,8 +4,12 @@ const CALLS = [
   'versions:list',
   'loaders:list',
   'java:list',
+  'java:install',
   'app:info',
   'net:addresses',
+  'ui:getTheme',
+  'ui:setTheme',
+  'servers:list',
   'server:info',
   'server:start',
   'server:stop',
@@ -22,10 +26,26 @@ const CALLS = [
   'mods:list',
   'mods:install',
   'mods:remove',
+  'mods:checkUpdates',
+  'mods:update',
   'open:folder',
   'open:eula',
   'open:java',
   'open:mod',
+  'maint:get',
+  'maint:set',
+  'backup:create',
+  'backup:restore',
+  'backup:delete',
+  'backup:reveal',
+  'players:get',
+  'players:action',
+  'mrpack:open',
+  'mrpack:cancel',
+  'mrpack:apply',
+  'pack:analyze',
+  'pack:export',
+  'pack:reveal',
   'vps:list',
   'vps:save',
   'vps:remove',
@@ -47,7 +67,7 @@ const CALLS = [
   'update:download',
   'update:install',
 ];
-const EVENTS = ['log', 'state', 'progress', 'update', 'issue', 'issues:clear', 'vps:progress', 'vps:log'];
+const EVENTS = ['log', 'state', 'progress', 'update', 'issue', 'issues:clear', 'vps:progress', 'vps:log', 'java:progress', 'stats', 'players', 'backups'];
 
 contextBridge.exposeInMainWorld('launcher', {
   // Возвращает данные или бросает ошибку с понятным текстом.
