@@ -65,7 +65,8 @@ try {
 }
 
 // В рабочей копии допустимы только правки версии и списка изменений.
-const dirty = git(['status', '--porcelain'])
+// Без trim: в формате porcelain первые символы строки — это статус (« M файл»).
+const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' })
   .split('\n')
   .filter(Boolean)
   .map((l) => l.slice(3))
