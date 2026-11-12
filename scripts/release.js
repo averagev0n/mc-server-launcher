@@ -87,7 +87,7 @@ if (git(['status', '--porcelain'])) {
 // ---- сборка ----
 
 step('Собираю установщик и портативную версию');
-fs.rmSync(path.join(ROOT, 'dist'), { recursive: true, force: true });
+// dist не очищаем целиком: старая портативная версия может быть запущена и держать свой файл.
 execSync('npx electron-builder --win --publish never', { cwd: ROOT, stdio: 'inherit' });
 
 const dist = path.join(ROOT, 'dist');
@@ -103,7 +103,9 @@ for (const f of files) if (!fs.existsSync(f)) fail(`После сборки не
 
 step(`Отправляю код и метку ${tag} на GitHub`);
 git(['tag', '-a', tag, '-m', `Версия ${version}`]);
-git(['push', 'origin', 'HEAD', '--follow-tags'], { stdio: 'inherit' });
+// Отправляем с учётной записью gh, не трогая общие настройки git.
+git(['-c', 'credential.helper=', '-c', `credential.helper=!'${GH.replace(/\\/g, '/')}' auth git-credential`,
+  'push', 'origin', 'HEAD', '--follow-tags'], { stdio: 'inherit' });
 
 step(`Создаю выпуск ${tag}`);
 const notesFile = path.join(os.tmpdir(), `release-notes-${version}.md`);
