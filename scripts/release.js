@@ -27,7 +27,8 @@ function ghPath() {
 }
 const GH = ghPath();
 const gh = (args, opts = {}) => execFileSync(GH, args, { cwd: ROOT, encoding: 'utf8', ...opts });
-const git = (args, opts = {}) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', ...opts }).trim();
+const git = (args, opts = {}) =>
+  (execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', ...opts }) || '').trim();
 
 function notesFor(version) {
   const text = fs.readFileSync(CHANGELOG, 'utf8');
@@ -102,7 +103,15 @@ for (const f of files) if (!fs.existsSync(f)) fail(`После сборки не
 // ---- публикация ----
 
 step(`Отправляю код и метку ${tag} на GitHub`);
-git(['tag', '-a', tag, '-m', `Версия ${version}`]);
+// Метка могла остаться от прерванного запуска — тогда она должна указывать на текущий коммит.
+let tagged = '';
+try {
+  tagged = git(['rev-list', '-n', '1', tag], { stdio: 'pipe' });
+} catch {
+  /* метки ещё нет */
+}
+if (!tagged) git(['tag', '-a', tag, '-m', `Версия ${version}`]);
+else if (tagged !== git(['rev-parse', 'HEAD'])) fail(`Метка ${tag} уже есть и указывает на другой коммит.`);
 // Отправляем с учётной записью gh, не трогая общие настройки git.
 git(['-c', 'credential.helper=', '-c', `credential.helper=!'${GH.replace(/\\/g, '/')}' auth git-credential`,
   'push', 'origin', 'HEAD', '--follow-tags'], { stdio: 'inherit' });
