@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -7,6 +7,8 @@ const core = require('./lib/core');
 const mods = require('./lib/mods');
 const configs = require('./lib/configs');
 const updater = require('./lib/updater');
+const diagnose = require('./lib/diagnose');
+const { createVps, HostKeyError } = require('./lib/vps');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
@@ -62,11 +64,18 @@ function memoryInfo() {
   return { totalGb: Math.round(total), maxGb: Math.max(1, Math.floor(total - 2)) };
 }
 
+const VPN_RE = /radmin|hamachi|zerotier|tailscale|wireguard|openvpn|vpn|tap-windows|wintun/i;
+
+/**
+ * Сетевые адреса компьютера: [{ address, name, vpn }].
+ * Адреса 169.254.* пропускаем — это «пустые» адреса отключённых сетей, по ним никто не подключится.
+ */
 function localAddresses() {
   const list = [];
-  for (const addrs of Object.values(os.networkInterfaces())) {
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
     for (const a of addrs || []) {
-      if (a.family === 'IPv4' && !a.internal) list.push(a.address);
+      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('169.254.')) continue;
+      list.push({ address: a.address, name, vpn: VPN_RE.test(name) });
     }
   }
   return list;
@@ -148,6 +157,15 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   }
 
   lastStart = { type, version, loader, ramGb, javaPath, eula: false };
+  resetIssues(dir, {
+    type,
+    version,
+    port: core.readProps(dir)['server-port'],
+    ip: core.readProps(dir)['server-ip'],
+    ramGb: ram,
+    javaMajor: java.major,
+    modded: isModded(type),
+  });
   setState('starting');
   const what = `${type} ${version}${inst.loader && isModded(type) ? ' (загрузчик ' + inst.loader + ')' : ''}`;
   log(`Запускаю ${what}, память ${ram} ГБ, ${java.text}…`);
@@ -176,9 +194,15 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
         if (!line && raw.trim()) continue;
         if (state === 'starting' && /Done \(/.test(line)) setState('running');
         send('log', { text: line, kind });
+        addLogLine(line);
       }
     });
-    stream.on('end', () => buf && send('log', { text: cleanLine(buf), kind }));
+    stream.on('end', () => {
+      if (!buf) return;
+      const line = cleanLine(buf);
+      send('log', { text: line, kind });
+      addLogLine(line);
+    });
   };
   pipe(proc.stdout, 'server');
   pipe(proc.stderr, 'error');
@@ -187,16 +211,17 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   proc.on('close', (code) => {
     if (child !== proc) return;
     clearTimeout(killTimer);
-    const wasStarting = state === 'starting';
+    const stoppedByUser = state === 'stopping';
     child = null;
     current = null;
     log(`Сервер остановлен (код ${code === null ? '—' : code}).`, code ? 'error' : 'info');
-    if (wasStarting && code && isModded(type)) {
-      log('Сервер упал при запуске. Частые причины: мод не для этой версии игры или загрузчика, ' +
-        'не хватает зависимости, или нужна другая Java (её можно выбрать в блоке «Запуск»).' +
-        (core.HYBRID_TYPES.includes(type)
-          ? ' На гибридном ядре причиной бывает и плагин, несовместимый с модами, — попробуйте убрать недавно добавленные.'
-          : ''), 'error');
+    // Остановился сам с ошибкой — объясняем, что случилось.
+    if (code && !stoppedByUser) {
+      const found = flushIssues();
+      if (!found) addIssue(diagnose.unknownCrash(code, issueCtx));
+      log('Объяснение ошибки — в подсказках над консолью.', 'error');
+    } else {
+      flushIssues();
     }
     setState('stopped');
     if (installUpdateAfterStop) {
@@ -211,6 +236,57 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
     }
     restartPending = false;
   });
+}
+
+// ---- объяснение ошибок ----
+
+const MAX_LOG = 5000;
+let logLines = []; // журнал текущего запуска — для разбора и «Скопировать журнал»
+let scanned = 0;
+let issueKeys = new Set();
+let issueDir = null; // папка сервера, к которому относятся подсказки
+let issueCtx = {};
+let scanTimer = null;
+
+function resetIssues(dir, ctx) {
+  logLines = [];
+  scanned = 0;
+  issueKeys = new Set();
+  issueDir = dir;
+  issueCtx = ctx;
+  clearTimeout(scanTimer);
+  send('issues:clear', {});
+}
+
+function addIssue(issue) {
+  if (issueKeys.has(issue.key)) return false;
+  issueKeys.add(issue.key);
+  send('issue', issue);
+  return true;
+}
+
+/** Проверяет новые строки журнала; возвращает true, если найдена хоть одна ошибка. */
+function flushIssues() {
+  clearTimeout(scanTimer);
+  scanTimer = null;
+  let error = false;
+  for (const issue of diagnose.diagnose(logLines, scanned, issueCtx)) {
+    addIssue(issue);
+  }
+  scanned = logLines.length;
+  for (const k of issueKeys) if (!/^(lag|crash-report):/.test(k)) error = true;
+  return error;
+}
+
+function addLogLine(line) {
+  logLines.push(line);
+  if (logLines.length > MAX_LOG) {
+    const drop = logLines.length - MAX_LOG;
+    logLines.splice(0, drop);
+    scanned = Math.max(0, scanned - drop);
+  }
+  // Разбираем пачками: сервер пишет сотни строк в секунду.
+  if (!scanTimer) scanTimer = setTimeout(flushIssues, 400);
 }
 
 function stopServer() {
@@ -245,6 +321,7 @@ handle('loaders:list', ({ type, version }) => core.listLoaders(type, version));
 handle('java:list', async ({ refresh }) =>
   (await core.findJavas(!!refresh)).map(({ path: p, major, bits, text }) => ({ path: p, major, bits, text }))
 );
+handle('net:addresses', () => localAddresses());
 handle('app:info', () => ({ root: ROOT, addresses: localAddresses(), state, current, memory: memoryInfo() }));
 handle('server:info', async ({ type, version }) => {
   const dir = serverDir(type, version);
@@ -345,6 +422,100 @@ handle('open:folder', async ({ type, version, sub, kind }) => {
   const err = await shell.openPath(dir);
   if (err) throw new Error(err);
 });
+// ---- VPS ----
+
+let vpsApi = null;
+function vps() {
+  if (!vpsApi) {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('Windows не даёт зашифровать пароль — сохранить VPS нельзя');
+    }
+    vpsApi = createVps({
+      dataDir: app.getPath('userData'),
+      // Пароли храним зашифрованными средствами Windows (DPAPI): прочитать их может только этот пользователь.
+      encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
+      decrypt: (b) => safeStorage.decryptString(Buffer.from(b, 'base64')),
+    });
+  }
+  return vpsApi;
+}
+
+handle('vps:list', () => vps().list());
+handle('vps:save', (input) => vps().save(input));
+handle('vps:remove', ({ id }) => vps().remove(id));
+handle('vps:forgetKey', ({ id }) => vps().forgetHostKey(id));
+handle('vps:pickKey', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Файл приватного ключа SSH',
+    defaultPath: path.join(app.getPath('home'), '.ssh'),
+    properties: ['openFile', 'showHiddenFiles'],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+handle('vps:info', async ({ id, acceptFingerprint }) => {
+  try {
+    return await vps().info(id, acceptFingerprint);
+  } catch (e) {
+    // Ключ сервера — не ошибка, а вопрос пользователю.
+    if (e instanceof HostKeyError) return { hostKey: { code: e.code, fingerprint: e.fingerprint, message: e.message } };
+    throw e;
+  }
+});
+handle('vps:transfer', async ({ id, type, version, name }) => {
+  const dir = serverDir(type, version);
+  const install = core.readInstall(dir);
+  if (!install || !install.args) throw new Error('Сначала установите сервер на ПК: запустите его хотя бы раз');
+  if (current && current.type === type && current.version === version) {
+    throw new Error('Остановите сервер на ПК перед переносом — иначе мир скопируется наполовину сохранённым');
+  }
+  const send2 = (payload) => send('vps:progress', { id, ...payload });
+  const res = await vps().transfer(
+    id,
+    {
+      localDir: dir,
+      name,
+      install: { ...install, type, mc: version },
+      need: await core.requiredJava(version),
+      modded: isModded(type),
+      port: core.readProps(dir)['server-port'],
+    },
+    (step) => send2({ step }),
+    (done, total) => send2({ done, total })
+  );
+  return res;
+});
+handle('vps:start', ({ id, name, ramGb }) => vps().start(id, name, ramGb));
+handle('vps:stop', ({ id, name }) => vps().stop(id, name));
+handle('vps:command', ({ id, name, text }) => vps().command(id, name, text));
+handle('vps:logOpen', ({ id, name }) => vps().openLog(id, name, (line) => send('vps:log', { id, name, line: cleanLine(line) })));
+handle('vps:logClose', ({ id, name }) => vps().closeLog(id, name));
+handle('vps:checkPort', ({ id, port }) => {
+  const p = vps().get(id);
+  return vps().checkPort(p.host, port || 25565);
+});
+
+handle('issue:copyLog', () => {
+  const text = logLines.slice(-500).join('\n');
+  if (!text) throw new Error('Журнал пуст — запустите сервер');
+  clipboard.writeText(text);
+  return Math.min(logLines.length, 500);
+});
+handle('issue:open', async ({ path: p }) => {
+  if (!issueDir) throw new Error('Неизвестно, к какому серверу относится файл');
+  const abs = path.resolve(issueDir, String(p || ''));
+  if (!abs.startsWith(path.resolve(issueDir) + path.sep) || !fs.existsSync(abs)) {
+    throw new Error('Файл отчёта не найден');
+  }
+  const err = await shell.openPath(abs);
+  if (err) throw new Error(err);
+});
+handle('issue:logs', async () => {
+  if (!issueDir) throw new Error('Сервер ещё не запускался');
+  const dir = path.join(issueDir, 'logs');
+  const err = await shell.openPath(fs.existsSync(dir) ? dir : issueDir);
+  if (err) throw new Error(err);
+});
+
 handle('update:state', () => ({
   enabled: updater.enabled(),
   version: app.getVersion(),
@@ -431,3 +602,5 @@ app.on('before-quit', (e) => {
   }
 });
 app.on('window-all-closed', () => app.quit());
+// Серверы на VPS продолжают работать — закрываем только SSH-соединения.
+app.on('will-quit', () => vpsApi && vpsApi.shutdown());

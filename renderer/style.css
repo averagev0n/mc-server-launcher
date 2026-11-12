@@ -218,6 +218,70 @@ input:disabled, select:disabled { opacity: .55; }
 .empty b { color: var(--text); }
 .list-empty { margin: 24px auto; color: var(--muted); text-align: center; }
 
+/* ---- VPS ---- */
+
+.vps { flex: 1; min-height: 0; display: flex; gap: 12px; }
+.vps-side { width: 200px; flex: none; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.vps-items { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.vps-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  width: 100%; padding: 7px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.vps-item:hover { background: var(--card); }
+.vps-item[aria-current="true"] { background: var(--line); }
+.vps-item b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.vps-item span { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.vps-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.vps-form { max-width: 560px; overflow-y: auto; }
+.vps-form .seg { align-self: flex-start; }
+.vps-form .row input { flex: 1; }
+.vps-open { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.vps-head { display: flex; align-items: center; gap: 8px; }
+.vps-head .cfg-title { flex: 1; }
+.vps-scroll { flex: 1 1 50%; min-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.vt-row { align-items: flex-end; }
+.vt-row .field { flex: 1; }
+.vt-row .btn { flex: none; }
+.vt-steps { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.vt-steps:empty { display: none; }
+.vt-steps li:last-child { color: var(--text); }
+.vt-steps li.bad { color: var(--danger); }
+.vps-srv .item-body { gap: 4px; }
+.vps-srv .ram { width: 64px; height: 28px; }
+.vps-srv .actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 4px; }
+.dot.on { background: var(--accent); }
+.vps-console { flex: 1 1 50%; min-height: 220px; }
+.vps-console .log { min-height: 120px; }
+
+/* ---- объяснения ошибок ---- */
+
+.issues { flex: none; display: flex; flex-direction: column; gap: 6px; max-height: 48%; min-height: 0; }
+.issues-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.issues-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; padding-right: 2px; }
+.issues.collapsed .issues-list { display: none; }
+
+.issue {
+  border: 1px solid var(--line); border-left: 3px solid var(--danger);
+  background: var(--card); border-radius: 8px; padding: 9px 12px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.issue.warn { border-left-color: var(--warn); }
+.issue.info { border-left-color: #7fb7e6; }
+.issue-top { display: flex; align-items: flex-start; gap: 8px; }
+.issue-title { flex: 1; font-weight: 600; font-size: 13.5px; }
+.issue-text { margin: 0; font-size: 13px; line-height: 1.45; color: #cfd5de; }
+.issue-fix { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.45; color: #cfd5de; }
+.issue-fix li + li { margin-top: 2px; }
+.issue-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.issue-line {
+  margin: 0; padding: 6px 8px; border-radius: 6px; background: #0f1216;
+  font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; color: var(--muted);
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.tab .count.bad { background: var(--danger); color: #fff; }
+
 /* ---- обновления ---- */
 
 .side-foot {

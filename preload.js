@@ -5,6 +5,7 @@ const CALLS = [
   'loaders:list',
   'java:list',
   'app:info',
+  'net:addresses',
   'server:info',
   'server:start',
   'server:stop',
@@ -25,12 +26,28 @@ const CALLS = [
   'open:eula',
   'open:java',
   'open:mod',
+  'vps:list',
+  'vps:save',
+  'vps:remove',
+  'vps:forgetKey',
+  'vps:pickKey',
+  'vps:info',
+  'vps:transfer',
+  'vps:start',
+  'vps:stop',
+  'vps:command',
+  'vps:logOpen',
+  'vps:logClose',
+  'vps:checkPort',
+  'issue:copyLog',
+  'issue:open',
+  'issue:logs',
   'update:state',
   'update:check',
   'update:download',
   'update:install',
 ];
-const EVENTS = ['log', 'state', 'progress', 'update'];
+const EVENTS = ['log', 'state', 'progress', 'update', 'issue', 'issues:clear', 'vps:progress', 'vps:log'];
 
 contextBridge.exposeInMainWorld('launcher', {
   // Возвращает данные или бросает ошибку с понятным текстом.

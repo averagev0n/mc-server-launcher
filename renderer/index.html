@@ -80,6 +80,11 @@
 
     <section class="card">
       <h2>Настройки сервера</h2>
+      <label class="field">
+        <span>IP сервера</span>
+        <select id="p-ip"></select>
+      </label>
+      <p class="hint" id="ip-hint"></p>
       <div class="grid">
         <label class="field">
           <span>Порт</span>
@@ -148,11 +153,19 @@
         <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
         <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
         <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
+        <button type="button" class="tab" role="tab" id="tab-vps" data-tab="vps">VPS</button>
       </div>
       <span id="address" class="address"></span>
     </div>
 
     <section id="view-console" class="view" role="tabpanel" aria-labelledby="tab-console">
+      <div id="issues" class="issues" hidden>
+        <div class="issues-head">
+          <b id="issues-title">Что случилось</b>
+          <button type="button" id="issues-toggle" class="link-btn">Свернуть</button>
+        </div>
+        <div id="issues-list" class="issues-list" role="list" aria-live="polite"></div>
+      </div>
       <div id="log" class="log" role="log" aria-live="off"></div>
       <form id="cmd-form" class="cmd">
         <input type="text" id="cmd" placeholder="Команда серверу, например: op Ник" autocomplete="off" disabled>
@@ -241,6 +254,94 @@
               <button type="button" id="cfg-discard" class="btn">Отменить</button>
               <button type="button" id="cfg-save" class="btn primary">Сохранить</button>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-vps" class="view" role="tabpanel" aria-labelledby="tab-vps" hidden>
+      <div class="vps">
+        <aside class="vps-side">
+          <div id="vps-items" class="vps-items"></div>
+          <button type="button" id="vps-add" class="btn small">+ Добавить VPS</button>
+        </aside>
+
+        <div class="vps-main">
+          <div id="vps-empty" class="empty">
+            <p class="empty-title">Перенос сервера на VPS</p>
+            <p>Настройте сервер у себя, затем перенесите его на арендованный сервер с Linux (Ubuntu, Debian) — там он будет работать круглосуточно, даже когда компьютер выключен.</p>
+            <p>Понадобятся адрес VPS, имя пользователя и пароль или ключ SSH — их даёт хостинг.</p>
+          </div>
+
+          <form id="vps-form" class="card vps-form" hidden autocomplete="off">
+            <h2 id="vps-form-title">Новый VPS</h2>
+            <div class="grid">
+              <label class="field"><span>Название (для себя)</span><input type="text" id="vf-name" maxlength="60" placeholder="Например: Мой VPS"></label>
+              <label class="field"><span>Адрес (IP или домен)</span><input type="text" id="vf-host" maxlength="253" placeholder="203.0.113.10" required></label>
+              <label class="field"><span>Пользователь</span><input type="text" id="vf-user" maxlength="32" value="root" required></label>
+              <label class="field"><span>Порт SSH</span><input type="number" id="vf-port" min="1" max="65535" value="22"></label>
+            </div>
+            <div class="seg" role="radiogroup" aria-label="Способ входа">
+              <button type="button" class="seg-btn" data-vauth="password" role="radio">Пароль</button>
+              <button type="button" class="seg-btn" data-vauth="key" role="radio">Ключ SSH</button>
+            </div>
+            <label class="field" id="vf-pass-row"><span>Пароль</span><input type="password" id="vf-pass" autocomplete="new-password"></label>
+            <div id="vf-key-row" hidden>
+              <label class="field"><span>Файл ключа</span>
+                <div class="row"><input type="text" id="vf-key" readonly placeholder="Не выбран"><button type="button" id="vf-key-pick" class="btn">Выбрать…</button></div>
+              </label>
+              <label class="field"><span>Пароль ключа (если есть)</span><input type="password" id="vf-keypass" autocomplete="new-password"></label>
+            </div>
+            <p class="hint">Пароль хранится на этом компьютере в зашифрованном виде (средствами Windows) и никуда, кроме вашего VPS, не отправляется.</p>
+            <p class="hint" id="vf-hint"></p>
+            <div class="row">
+              <button type="button" id="vf-cancel" class="btn">Отмена</button>
+              <button type="submit" id="vf-save" class="btn primary">Сохранить и подключиться</button>
+            </div>
+          </form>
+
+          <div id="vps-open" class="vps-open" hidden>
+            <div class="vps-head">
+              <div class="cfg-title">
+                <b id="vps-name"></b>
+                <span id="vps-sub" class="meta"></span>
+              </div>
+              <button type="button" id="vps-refresh" class="btn small">Обновить</button>
+              <button type="button" id="vps-edit" class="btn small">Изменить</button>
+              <button type="button" id="vps-del" class="btn small danger">Удалить</button>
+            </div>
+            <p class="hint" id="vps-hint"></p>
+
+            <div class="vps-scroll">
+              <section class="card">
+                <h2>Перенести сервер с ПК</h2>
+                <p class="hint" id="vt-what"></p>
+                <div class="row vt-row">
+                  <label class="field"><span>Имя папки на VPS</span><input type="text" id="vt-name" maxlength="64"></label>
+                  <button type="button" id="vt-go" class="btn primary">Перенести на VPS</button>
+                </div>
+                <div class="progress" id="vt-progress" hidden><div id="vt-bar"></div></div>
+                <ul id="vt-steps" class="vt-steps"></ul>
+              </section>
+
+              <section class="card">
+                <h2>Серверы на VPS</h2>
+                <div id="vps-servers" class="list"></div>
+              </section>
+            </div>
+
+            <section id="vps-console" class="vps-console card" hidden>
+              <div class="vps-head">
+                <b id="vc-title"></b>
+                <span id="vc-addr" class="address"></span>
+                <button type="button" id="vc-close" class="btn small">Закрыть консоль</button>
+              </div>
+              <div id="vc-log" class="log" role="log"></div>
+              <form id="vc-form" class="cmd">
+                <input type="text" id="vc-cmd" placeholder="Команда серверу на VPS" autocomplete="off">
+                <button type="submit" class="btn primary">Отправить</button>
+              </form>
+            </section>
           </div>
         </div>
       </div>

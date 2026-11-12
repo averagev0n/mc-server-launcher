@@ -17,6 +17,7 @@
   "build": {
     "appId": "local.mcserverlauncher",
     "productName": "MC Server Launcher",
+    "npmRebuild": false,
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -74,6 +75,8 @@
     "electron-updater": "^6.8.11",
     "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.1",
+    "ssh2": "^1.17.0",
+    "tar": "^7.5.23",
     "yaml": "^2.9.1"
   }
 }
