@@ -28,6 +28,7 @@
       "preload.js",
       "lib/**",
       "renderer/**",
+      "build/icon.png",
       "CHANGELOG.md",
       "package.json"
     ],

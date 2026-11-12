@@ -723,3 +723,17 @@ input[type="time"] {
 /* В длинных списках «Установить» — спокойнее основной кнопки, иначе экран рябит чёрными плашками. */
 .item .btn.primary { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .item .btn.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--card); }
+
+/* ---- дополнительные блоки настроек ---- */
+.sub-box { padding: 12px 14px; border-radius: 12px; background: var(--raise); }
+.sub-box .row select { flex: 1; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.sub-label { font-size: 12.5px; color: var(--muted); }
+.card .row select { flex: 1; min-width: 0; }
+.address .net-check { margin-left: auto; font-size: 13px; }
+.presets { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.presets-label { font-size: 13px; color: var(--muted); }
+.presets .hint { flex: 1; min-width: 200px; }
+#wz-world .seg { align-self: flex-start; }
+.row > select { flex: 1; min-width: 0; width: auto; }
+.row:has(> select) > .btn { flex: none; }

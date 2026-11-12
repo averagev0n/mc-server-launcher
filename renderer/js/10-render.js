@@ -139,7 +139,10 @@ function renderAddress(show) {
   const box = $('address');
   box.replaceChildren();
   box.hidden = !show;
-  if (!show) return;
+  if (!show) {
+    setHint('net-result', '');
+    return;
+  }
   const suffix = port === '25565' ? '' : ':' + port;
   // Если сервер привязан к одному IP, работает только он (даже localhost — нет).
   const list = serverIp
@@ -176,6 +179,13 @@ function renderAddress(show) {
     });
     box.appendChild(b);
   }
+  const check = document.createElement('button');
+  check.type = 'button';
+  check.className = 'link-btn net-check';
+  check.textContent = serverIp ? '' : 'Проверить доступ из интернета';
+  check.hidden = !!serverIp;
+  check.addEventListener('click', () => checkInternet());
+  box.appendChild(check);
 }
 
 function render() {

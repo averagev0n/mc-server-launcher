@@ -131,6 +131,9 @@ function openWizard() {
   wz.step = 1;
   pinVersion = '';
   $('wz-name').value = '';
+  $('wz-seed').value = '';
+  $('wz-level').value = 'normal';
+  wzWorld = 'new';
   $('eula').checked = false;
   // Предлагаем то, что выбирают чаще всего; пользователь поменяет одним нажатием.
   // Если до этого был открыт сервер — начинаем с его типа.
@@ -207,6 +210,7 @@ function renderWizard() {
   for (const b of document.querySelectorAll('.wz-page[data-page="2"] [data-wz="next"]')) b.disabled = !wizardReady(2);
 
   if (s === 3) {
+    if (typeof renderWizardWorld === 'function') renderWizardWorld();
     const v = $('version').value;
     const loaderText = isModded() && $('loader').selectedOptions[0] ? `, ${$('loader').selectedOptions[0].textContent}` : '';
     $('wz-summary').textContent = `${KIND_TEXT[type]}, Minecraft ${v}${loaderText}. Осталось выбрать память и принять лицензию Minecraft — файлы сервера скачаются при первом запуске.`;
@@ -230,6 +234,7 @@ async function createFromWizard() {
   const name = $('wz-name').value.trim();
   try {
     if (name) await api.call('maint:set', { type: t, version: v, settings: { name } });
+    await applyWizardWorld(t, v);
   } catch (e) {
     setHint('wz-hint', e.message, 'bad');
     return;

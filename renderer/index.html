@@ -122,6 +122,28 @@
             <span>Название (видите только вы)</span>
             <input type="text" id="wz-name" maxlength="60" placeholder="Например: Выживание с друзьями">
           </label>
+          <div class="field" id="wz-world">
+            <span>Мир</span>
+            <div class="seg" role="radiogroup" aria-label="Мир">
+              <button type="button" class="seg-btn" role="radio" data-world="new">Новый мир</button>
+              <button type="button" class="seg-btn" role="radio" data-world="import">Из одиночной игры</button>
+            </div>
+          </div>
+          <div class="grid" id="wz-world-new">
+            <label class="field"><span>Тип мира</span>
+              <select id="wz-level">
+                <option value="normal">Обычный</option>
+                <option value="large_biomes">Большие биомы</option>
+                <option value="amplified">Расширенный (высокие горы)</option>
+                <option value="flat">Плоский</option>
+              </select>
+            </label>
+            <label class="field"><span>Сид (необязательно)</span><input type="text" id="wz-seed" maxlength="64" placeholder="Случайный" autocomplete="off"></label>
+          </div>
+          <div class="row" id="wz-world-import" hidden>
+            <select id="wz-save" aria-label="Мир из одиночной игры"></select>
+            <button type="button" id="wz-save-pick" class="btn">Другая папка…</button>
+          </div>
           <div id="wz-launch-slot"></div>
           <div id="wz-eula-slot"></div>
           <p class="hint" id="wz-hint"></p>
@@ -149,6 +171,7 @@
         </div>
       </header>
       <div id="address" class="address" hidden></div>
+      <p class="hint" id="net-result"></p>
       <div id="home-eula">
         <label class="check eula" id="eula-row">
           <input type="checkbox" id="eula">
@@ -218,6 +241,11 @@
             <input type="search" id="search" placeholder="Название мода, например: JEI или Create" autocomplete="off">
             <button type="submit" class="btn primary">Найти</button>
           </form>
+          <div class="presets" id="presets" hidden>
+            <span class="presets-label">Готовые наборы:</span>
+            <button type="button" class="btn small" id="preset-go"></button>
+            <span class="hint" id="preset-what"></span>
+          </div>
           <p class="hint" id="search-hint"></p>
           <div id="results" class="list"></div>
           <button type="button" id="more" class="btn more" hidden>Показать ещё</button>
@@ -390,6 +418,7 @@
             <label class="check"><input type="checkbox" id="rs-on"><span>Перезапускать каждый день в</span></label>
             <input type="time" id="rs-time" step="60">
           </div>
+          <label class="check"><input type="checkbox" id="rs-crash"><span>Перезапускать сервер, если он упал во время игры (не больше 3 раз за полчаса)</span></label>
           <p class="hint" id="mt-hint"></p>
         </section>
       </div>
@@ -496,7 +525,29 @@
           <div id="home-loader"></div>
           <div class="row">
             <button type="button" id="folder" class="btn">Открыть папку сервера</button>
+            <button type="button" id="up-open" class="btn">Перенести на другую версию…</button>
+            <button type="button" id="srv-delete" class="btn danger">Удалить сервер</button>
           </div>
+          <div id="up-row" class="stack sub-box" hidden>
+            <p class="hint">Создаётся новый сервер на выбранной версии с копией мира, настроек и списков игроков. Этот сервер остаётся как есть — если что-то пойдёт не так, можно вернуться к нему.</p>
+            <div class="row">
+              <select id="up-version" aria-label="Новая версия игры"></select>
+              <button type="button" id="up-go" class="btn primary">Перенести</button>
+            </div>
+            <p class="hint" id="up-hint"></p>
+          </div>
+          <p class="hint" id="srv-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Мир</h2>
+          <p class="hint">Можно взять мир из одиночной игры: текущий мир сервера сначала сохранится копией (вкладка «Обслуживание»).</p>
+          <div class="row">
+            <select id="wi-save" aria-label="Мир из одиночной игры"></select>
+            <button type="button" id="wi-pick" class="btn">Другая папка…</button>
+            <button type="button" id="wi-go" class="btn">Заменить мир</button>
+          </div>
+          <p class="hint" id="wi-hint"></p>
         </section>
 
         <section class="card">
@@ -551,6 +602,51 @@
             <button type="button" id="save" class="btn primary">Сохранить</button>
           </div>
           <p class="hint" id="props-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Доступ из интернета</h2>
+          <p class="hint">Чтобы друзья заходили без VPN, на роутере должен быть открыт порт сервера. Лаунчер умеет открывать его сам, если в роутере включён UPnP. Порт открыт, только пока сервер работает.</p>
+          <label class="check"><input type="checkbox" id="net-upnp"><span>Открывать порт на роутере автоматически (UPnP)</span></label>
+          <p class="hint" id="net-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Сообщения в Discord</h2>
+          <p class="hint">В настройках канала Discord: «Интеграция» → «Вебхуки» → «Новый вебхук» → «Копировать URL вебхука». Вставьте адрес сюда.</p>
+          <label class="field"><span>Адрес вебхука</span><input type="text" id="dc-url" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false"></label>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="dc-start"><span>Запуск и остановка</span></label>
+            <label class="check"><input type="checkbox" id="dc-players"><span>Кто зашёл и вышел</span></label>
+            <label class="check"><input type="checkbox" id="dc-crash"><span>Сервер упал</span></label>
+          </div>
+          <div class="row">
+            <button type="button" id="dc-save" class="btn">Сохранить</button>
+            <button type="button" id="dc-test" class="btn">Отправить проверку</button>
+          </div>
+          <p class="hint" id="dc-hint"></p>
+        </section>
+
+        <section class="card" id="map-card">
+          <h2>Карта мира в браузере</h2>
+          <p class="hint">BlueMap рисует трёхмерную карту мира — её можно открыть в браузере и отправить ссылку друзьям.</p>
+          <p class="hint" id="map-hint"></p>
+          <label class="check" id="map-accept-row" hidden><input type="checkbox" id="map-accept"><span>Разрешить BlueMap скачать файлы игры с серверов Mojang (без них карта не нарисуется). Ставя галочку, вы принимаете <a href="#" id="map-eula">лицензию Minecraft</a>.</span></label>
+          <div class="row">
+            <button type="button" id="map-install" class="btn">Установить BlueMap</button>
+            <button type="button" id="map-open" class="btn" hidden>Открыть карту</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Лаунчер</h2>
+          <label class="check"><input type="checkbox" id="pf-tray"><span>Если закрыть окно, пока сервер работает, — сворачивать в трей (сервер продолжит работать)</span></label>
+          <span class="sub-label">Уведомления Windows</span>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="pf-started"><span>Сервер готов</span></label>
+            <label class="check"><input type="checkbox" id="pf-players"><span>Игрок зашёл или вышел</span></label>
+            <label class="check"><input type="checkbox" id="pf-crash"><span>Сервер упал</span></label>
+          </div>
         </section>
       </div>
     </section>
@@ -618,6 +714,7 @@
   <script src="js/70-data.js"></script>
   <script src="js/80-events.js"></script>
   <script src="js/90-shell.js"></script>
+  <script src="js/95-extras.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

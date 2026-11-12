@@ -51,5 +51,5 @@ test('настройки обслуживания проверяются', (t) =
   assert.throws(() => backup.writeSettings(d, { backup: { everyHours: 5 } }), /интервал/);
   assert.throws(() => backup.backupPath(d, '../evil.tar.gz'), /Некорректное/);
   const s = backup.writeSettings(d, { restart: { enabled: true, time: '04:30' } });
-  assert.deepEqual(s.restart, { enabled: true, time: '04:30' });
+  assert.deepEqual(s.restart, { enabled: true, time: '04:30', onCrash: true });
 });

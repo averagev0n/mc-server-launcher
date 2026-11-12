@@ -14,6 +14,7 @@ function renderMaint() {
   $('bk-keep').value = d.settings.backup.keep;
   $('rs-on').checked = d.settings.restart.enabled;
   $('rs-time').value = d.settings.restart.time;
+  $('rs-crash').checked = d.settings.restart.onCrash !== false;
   $('bk-now').disabled = mtBusy || !d.hasWorld;
 
   const box = $('bk-list');
@@ -109,7 +110,7 @@ async function deleteBackup(b) {
 async function saveMaint() {
   const settings = {
     backup: { beforeStart: $('bk-before').checked, everyHours: Number($('bk-every').value), keep: Number($('bk-keep').value) },
-    restart: { enabled: $('rs-on').checked, time: $('rs-time').value || '05:00' },
+    restart: { enabled: $('rs-on').checked, time: $('rs-time').value || '05:00', onCrash: $('rs-crash').checked },
   };
   try {
     mtData.settings = await api.call('maint:set', { ...selected(), settings });
@@ -120,7 +121,7 @@ async function saveMaint() {
   }
 }
 
-for (const id of ['bk-before', 'bk-every', 'bk-keep', 'rs-on', 'rs-time']) $(id).addEventListener('change', saveMaint);
+for (const id of ['bk-before', 'bk-every', 'bk-keep', 'rs-on', 'rs-time', 'rs-crash']) $(id).addEventListener('change', saveMaint);
 $('bk-now').addEventListener('click', async () => {
   mtBusy = true;
   setHint('bk-hint', 'Делаю копию…');

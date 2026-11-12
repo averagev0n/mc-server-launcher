@@ -20,6 +20,7 @@
   }
   loadUpdateState();
   loadTheme();
+  loadPrefs();
   await loadJavas(false);
   addLog('Нажмите «Запустить» — всё нужное скачается само.');
   await refreshServers();

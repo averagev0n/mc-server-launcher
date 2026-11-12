@@ -9,7 +9,7 @@ const CALLS = [
   'net:addresses',
   'ui:getTheme',
   'ui:setTheme',
-  'servers:list',
+  'servers:list', 'ui:getPrefs', 'ui:setPrefs', 'server:delete', 'server:upgrade', 'world:saves', 'world:pick', 'world:import', 'world:setup', 'net:check', 'net:upnp', 'discord:test', 'map:get', 'map:accept', 'map:open',
   'server:info',
   'server:start',
   'server:stop',
@@ -67,7 +67,7 @@ const CALLS = [
   'update:download',
   'update:install',
 ];
-const EVENTS = ['log', 'state', 'progress', 'update', 'issue', 'issues:clear', 'vps:progress', 'vps:log', 'java:progress', 'stats', 'players', 'backups'];
+const EVENTS = ['log', 'state', 'progress', 'update', 'issue', 'issues:clear', 'vps:progress', 'vps:log', 'java:progress', 'stats', 'players', 'backups', 'net'];
 
 contextBridge.exposeInMainWorld('launcher', {
   // Возвращает данные или бросает ошибку с понятным текстом.

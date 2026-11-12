@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog, nativeTheme, Tray, Menu, Notification, nativeImage } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,6 +14,9 @@ const { startMonitor } = require('./lib/monitor');
 const updater = require('./lib/updater');
 const diagnose = require('./lib/diagnose');
 const { createVps, HostKeyError } = require('./lib/vps');
+const servers = require('./lib/servers');
+const upnp = require('./lib/upnp');
+const { createDiscord, escapeMd } = require('./lib/discord');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
@@ -53,8 +56,10 @@ function send(channel, payload) {
 }
 const log = (text, kind = 'info') => send('log', { text, kind });
 function setState(next) {
+  const was = state;
   state = next;
   send('state', { state, current });
+  if (next !== was) onState(next);
 }
 
 // Цветовые коды терминала (ESC[...m) — в окне лаунчера они не нужны.
@@ -248,16 +253,21 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
     } else {
       flushIssues();
     }
+    const ranMs = runningSince ? Date.now() - runningSince : 0;
+    runningSince = 0;
     setState('stopped');
+    onStopped({ dir, type, version, code, stoppedByUser });
     if (installUpdateAfterStop) {
       installUpdateAfterStop = false;
       updater.install();
     } else if (quitting) {
-      app.quit();
+      closeUpnp().finally(() => app.quit());
     } else if (restartPending && lastStart) {
       restartPending = false;
       log('Перезапускаю сервер…');
       startServer(lastStart).catch((e) => log(e.message, 'error'));
+    } else if (code && !stoppedByUser) {
+      scheduleCrashRestart(dir, ranMs, code);
     }
     restartPending = false;
   });
@@ -334,6 +344,8 @@ function waitForLog(re, ms) {
 function addLogLine(line) {
   const ev = players.parseLine(line);
   if (ev) {
+    if (ev.join && !online.has(ev.join)) onPlayer(ev.join, true);
+    if (ev.leave && online.has(ev.leave)) onPlayer(ev.leave, false);
     if (ev.join) online.add(ev.join);
     if (ev.leave) online.delete(ev.leave);
     if (ev.list) {
@@ -585,6 +597,342 @@ handle('mrpack:apply', async () => {
   return { type: p.type, mc: p.mc, loader: p.loader, ...r };
 });
 
+// ---- события сервера: уведомления, Discord, порт на роутере, перезапуск после падения ----
+
+const TYPE_SHORT = {
+  vanilla: 'Minecraft', paper: 'Paper', fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge',
+  youer: 'Youer', arclight: 'Arclight', mohist: 'Mohist',
+};
+const ICON = path.join(__dirname, 'build', 'icon.png');
+const discord = createDiscord((url, opts) => net.fetch(url, opts), core.UA);
+let runningSince = 0;
+let upnpState = null; // { port, externalIp } — порт, открытый на роутере
+let quitRequested = false;
+let tray = null;
+let trayHinted = false;
+
+const PREF_DEFAULTS = { tray: true, notify: { started: true, players: true, crash: true } };
+function prefs() {
+  const p = readUi().prefs || {};
+  return { tray: p.tray ?? PREF_DEFAULTS.tray, notify: { ...PREF_DEFAULTS.notify, ...(p.notify || {}) } };
+}
+
+function serverTitle(type, version) {
+  try {
+    return backup.readSettings(serverDir(type, version)).name || `${TYPE_SHORT[type] || type} ${version}`;
+  } catch {
+    return `${type} ${version}`;
+  }
+}
+const currentSettings = () => (current ? backup.readSettings(serverDir(current.type, current.version)) : null);
+
+function showWindow() {
+  if (!win) return createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+/** Уведомление Windows. always — показать, даже если такие уведомления выключены. */
+function notify(title, body, always = false, kind = null) {
+  if (!always && kind && !prefs().notify[kind]) return;
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, icon: ICON, silent: kind === 'players' });
+  n.on('click', showWindow);
+  n.show();
+}
+
+// ---- значок в трее ----
+
+function trayMenu() {
+  const busy = state !== 'stopped' && current;
+  const tip = busy
+    ? `${serverTitle(current.type, current.version)} — ${state === 'running' ? `работает, игроков: ${online.size}` : 'запускается…'}`
+    : 'Сервер не запущен';
+  tray.setToolTip(`Лаунчер сервера Minecraft\n${tip}`);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Открыть лаунчер', click: showWindow },
+      { label: tip, enabled: false },
+      { type: 'separator' },
+      { label: 'Остановить сервер', enabled: !!child && state !== 'stopping', click: () => stopServer() },
+      { label: 'Выйти', click: () => app.quit() },
+    ])
+  );
+}
+function ensureTray() {
+  if (tray) return trayMenu();
+  const img = nativeImage.createFromPath(ICON);
+  tray = new Tray(img.isEmpty() ? img : img.resize({ width: 16, height: 16 }));
+  tray.on('click', showWindow);
+  trayMenu();
+}
+
+// ---- порт на роутере ----
+
+async function openUpnp(port) {
+  try {
+    const r = await upnp.openPort(port, 'Minecraft server (MC Server Launcher)');
+    upnpState = { port, externalIp: r.externalIp };
+    if (r.externalIp && upnp.isPrivateIp(r.externalIp)) {
+      log(`Порт ${port} открыт на роутере, но у роутера «серый» адрес ${r.externalIp}: провайдер не даёт внешний IP, из интернета сервер всё равно не будет виден.`, 'error');
+    } else {
+      log(`Порт ${port} открыт на роутере${r.externalIp ? ` — адрес для друзей из интернета: ${r.externalIp}${port === 25565 ? '' : ':' + port}` : ''}.`);
+    }
+    send('net', { upnp: upnpState });
+    return upnpState;
+  } catch (e) {
+    log(`Не удалось открыть порт на роутере: ${e.message}.`, 'error');
+    throw e;
+  }
+}
+function closeUpnp() {
+  if (!upnpState) return Promise.resolve();
+  const port = upnpState.port;
+  upnpState = null;
+  send('net', { upnp: null });
+  return Promise.race([upnp.closePort(port).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+}
+
+// ---- реакция на состояние ----
+
+function onState(next) {
+  if (tray) trayMenu();
+  if (next === 'running' && current) {
+    runningSince = Date.now();
+    const { type, version } = current;
+    const title = serverTitle(type, version);
+    const s = currentSettings();
+    notify('Сервер запущен', `«${title}» готов — можно заходить.`, false, 'started');
+    if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🟢 Сервер **${escapeMd(title)}** запущен (Minecraft ${version}).`);
+    if (s.net.upnp) openUpnp(Number(core.readProps(serverDir(type, version))['server-port']) || 25565).catch(() => {});
+  }
+}
+
+function onPlayer(name, joined) {
+  if (!current) return;
+  if (tray) setTimeout(trayMenu, 0);
+  const s = currentSettings();
+  if (!win || !win.isVisible() || !win.isFocused()) {
+    notify(joined ? `${name} зашёл на сервер` : `${name} вышел с сервера`, serverTitle(current.type, current.version), false, 'players');
+  }
+  if (s.discord.url && s.discord.players) {
+    discord.send(s.discord.url, joined ? `➡️ **${escapeMd(name)}** зашёл на сервер` : `⬅️ ${escapeMd(name)} вышел с сервера`);
+  }
+}
+
+function onStopped({ dir, type, version, code, stoppedByUser }) {
+  closeUpnp();
+  const s = backup.readSettings(dir);
+  const title = serverTitle(type, version);
+  if (code && !stoppedByUser) {
+    notify('Сервер упал', `«${title}» остановился с ошибкой. Объяснение — в лаунчере.`, false, 'crash');
+    if (s.discord.url && s.discord.crash) discord.send(s.discord.url, `⚠️ Сервер **${escapeMd(title)}** упал (код ${code}).`);
+  } else if (s.discord.url && s.discord.start) {
+    discord.send(s.discord.url, `🔴 Сервер **${escapeMd(title)}** остановлен.`);
+  }
+}
+
+// ---- перезапуск после падения ----
+
+const crashTimes = [];
+let crashTimer = null;
+
+function scheduleCrashRestart(dir, ranMs, code) {
+  const s = backup.readSettings(dir);
+  if (!s.restart.onCrash || !lastStart) return;
+  if (ranMs < 60 * 1000) {
+    log('Сервер упал во время запуска — перезапускать автоматически не буду: скорее всего, дело в модах или настройках.', 'error');
+    return;
+  }
+  const now = Date.now();
+  while (crashTimes.length && now - crashTimes[0] > 30 * 60 * 1000) crashTimes.shift();
+  if (crashTimes.length >= 3) {
+    log('Сервер упал 3 раза за полчаса — автоматический перезапуск выключен до следующего запуска вручную.', 'error');
+    return;
+  }
+  crashTimes.push(now);
+  log(`Сервер упал (код ${code}) — перезапущу через 10 секунд. Чтобы отменить, нажмите «Запустить» или выключите это во вкладке «Обслуживание».`, 'error');
+  const opts = lastStart;
+  crashTimer = setTimeout(() => {
+    crashTimer = null;
+    if (state !== 'stopped') return;
+    log('Перезапускаю сервер после падения…');
+    startServer(opts).catch((e) => log(e.message, 'error'));
+  }, 10000);
+}
+function cancelCrashRestart(resetCount) {
+  clearTimeout(crashTimer);
+  crashTimer = null;
+  if (resetCount) crashTimes.length = 0;
+}
+
+// ---- настройки лаунчера ----
+
+handle('ui:getPrefs', () => prefs());
+handle('ui:setPrefs', (input) => {
+  const cur = prefs();
+  const next = {
+    tray: !!(input.tray ?? cur.tray),
+    notify: {
+      started: !!((input.notify || {}).started ?? cur.notify.started),
+      players: !!((input.notify || {}).players ?? cur.notify.players),
+      crash: !!((input.notify || {}).crash ?? cur.notify.crash),
+    },
+  };
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), prefs: next }), 'utf8');
+  if (!next.tray && tray) {
+    tray.destroy();
+    tray = null;
+  }
+  return next;
+});
+
+// ---- серверы целиком: удалить, перенести на другую версию ----
+
+const needStopped = (type, version, what) => {
+  if (isCurrent(type, version) && state !== 'stopped') throw new Error(`Остановите сервер, чтобы ${what}`);
+};
+
+handle('server:delete', async ({ type, version }) => {
+  needStopped(type, version, 'удалить его');
+  const dir = serverDir(type, version);
+  if (!fs.existsSync(dir)) return;
+  await shell.trashItem(dir);
+});
+
+handle('server:upgrade', ({ type, version, to }) => {
+  core.checkArgs(type, to);
+  needStopped(type, version, 'перенести мир');
+  return servers.copyForUpgrade(serverDir(type, version), serverDir(type, to), type);
+});
+
+// ---- миры ----
+
+const savesDir = () => path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.minecraft', 'saves');
+
+handle('world:saves', () => servers.listSaves(savesDir()));
+handle('world:pick', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Папка мира Minecraft (внутри есть level.dat)',
+    defaultPath: fs.existsSync(savesDir()) ? savesDir() : os.homedir(),
+    properties: ['openDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const info = servers.saveInfo(r.filePaths[0]);
+  if (!info) throw new Error('В этой папке нет мира Minecraft (не найден level.dat)');
+  return info;
+});
+handle('world:import', async ({ type, version, src }) => {
+  needStopped(type, version, 'заменить мир');
+  const dir = serverDir(type, version);
+  if (!servers.saveInfo(String(src))) throw new Error('В этой папке нет мира Minecraft (не найден level.dat)');
+  if (backup.worldDirs(dir).length) await makeBackup(dir, 'before-import', false);
+  const r = servers.importWorld(dir, String(src), core.readProps(dir)['level-name'] || 'world');
+  log(`Мир «${r.name}» перенесён на сервер.`);
+  send('backups', { dir });
+  return r;
+});
+handle('world:setup', ({ type, version, seed, levelType }) => {
+  const dir = serverDir(type, version);
+  if (backup.worldDirs(dir).length) throw new Error('Мир уже создан — сид и тип мира меняются только для нового мира');
+  core.writeProps(dir, { 'level-seed': String(seed || ''), 'level-type': servers.levelTypeValue(version, levelType || 'normal') });
+});
+
+// ---- доступ из интернета ----
+
+async function getJson(url) {
+  const res = await net.fetch(url, { headers: { 'User-Agent': core.UA } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+handle('net:check', async ({ type, version }) => {
+  if (!isCurrent(type, version) || state !== 'running') throw new Error('Проверить можно только работающий сервер — сначала запустите его');
+  const props = core.readProps(serverDir(type, version));
+  if (props['server-ip']) throw new Error('Сервер привязан к одному адресу (вкладка «Настройки» → IP сервера) — из интернета он не виден');
+  const port = Number(props['server-port']) || 25565;
+  let publicIp;
+  try {
+    publicIp = (await getJson('https://api.ipify.org?format=json')).ip;
+  } catch {
+    throw new Error('Не удалось узнать внешний адрес — проверьте подключение к интернету');
+  }
+  const out = { port, publicIp, upnp: upnpState, cgnat: false, reachable: false };
+  if (upnpState && upnpState.externalIp && (upnp.isPrivateIp(upnpState.externalIp) || upnpState.externalIp !== publicIp)) out.cgnat = true;
+  try {
+    const j = await getJson(`https://api.mcsrvstat.us/3/${encodeURIComponent(publicIp)}:${port}`);
+    out.reachable = !!j.online;
+  } catch {
+    throw new Error('Сервис проверки (mcsrvstat.us) не ответил — попробуйте через минуту');
+  }
+  return out;
+});
+
+handle('net:upnp', async ({ type, version, on }) => {
+  const dir = serverDir(type, version);
+  backup.writeSettings(dir, { net: { upnp: !!on } });
+  const live = isCurrent(type, version) && state === 'running';
+  if (on && live && !upnpState) return { upnp: await openUpnp(Number(core.readProps(dir)['server-port']) || 25565) };
+  if (!on && upnpState) await closeUpnp();
+  return { upnp: upnpState };
+});
+
+// ---- Discord ----
+
+handle('discord:test', async ({ type, version, url }) => {
+  const dir = serverDir(type, version);
+  const s = backup.writeSettings(dir, { discord: { url } }); // заодно проверяет адрес
+  if (!s.discord.url) throw new Error('Вставьте адрес вебхука');
+  await discord.test(s.discord.url, `✅ Лаунчер подключён: сюда будут приходить сообщения о сервере **${escapeMd(serverTitle(type, version))}**.`);
+  return s;
+});
+
+// ---- карта мира (BlueMap) ----
+
+function bluemapInfo(type, dir) {
+  const jar = (sub) => {
+    try {
+      return fs.readdirSync(path.join(dir, sub)).some((f) => /^bluemap.*\.jar$/i.test(f));
+    } catch {
+      return false;
+    }
+  };
+  const installed = jar('mods') || jar('plugins');
+  const confDir = [path.join(dir, 'plugins', 'BlueMap'), path.join(dir, 'config', 'bluemap')].find((d) => fs.existsSync(path.join(d, 'core.conf')));
+  let accepted = false;
+  let port = 8100;
+  if (confDir) {
+    accepted = /^\s*accept-download\s*:\s*true/m.test(fs.readFileSync(path.join(confDir, 'core.conf'), 'utf8'));
+    try {
+      const m = fs.readFileSync(path.join(confDir, 'webserver.conf'), 'utf8').match(/^\s*port\s*:\s*(\d+)/m);
+      if (m) port = Number(m[1]);
+    } catch {
+      /* настройки веб-сервера по умолчанию */
+    }
+  }
+  return { supported: type !== 'vanilla', installed, configured: !!confDir, confDir, accepted, port };
+}
+
+handle('map:get', ({ type, version }) => {
+  const { confDir, ...rest } = bluemapInfo(type, serverDir(type, version));
+  return rest;
+});
+// Вызывается только по галочке пользователя: BlueMap скачивает файлы игры с серверов Mojang.
+handle('map:accept', ({ type, version }) => {
+  const info = bluemapInfo(type, serverDir(type, version));
+  if (!info.confDir) throw new Error('Запустите сервер один раз — BlueMap создаст свои настройки');
+  const file = path.join(info.confDir, 'core.conf');
+  const text = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, text.replace(/^(\s*accept-download\s*:\s*)false/m, '$1true'), 'utf8');
+  return { ...info, accepted: true, confDir: undefined };
+});
+handle('map:open', ({ type, version }) => {
+  const { port } = bluemapInfo(type, serverDir(type, version));
+  return shell.openExternal(`http://localhost:${port}`);
+});
+
 // ---- оформление: светлая, тёмная или как в Windows ----
 
 const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
@@ -670,8 +1018,12 @@ handle('server:info', async ({ type, version }) => {
     flavor: core.hybridFlavor(type, inst && inst.loader),
   };
 });
-handle('server:start', (opts) => startServer(opts));
+handle('server:start', (opts) => {
+  cancelCrashRestart(true);
+  return startServer(opts);
+});
 handle('server:stop', () => {
+  cancelCrashRestart(false);
   restartPending = false;
   stopServer();
 });
@@ -702,13 +1054,13 @@ handle('mods:search', ({ type, version, query, offset, kind, loader }) => {
   return mods.search({ type, mc: version, query, offset, kind, flavor: flavorFor(type, version, loader) });
 });
 handle('mods:list', ({ type, version, kind }) => mods.listInstalled(type, serverDir(type, version), kind));
-handle('mods:install', async ({ type, version, projectId, kind, loader }) => {
+handle('mods:install', async ({ type, version, projectId, kind, loader, bySlug }) => {
   if (modBusy) throw new Error('Дождитесь окончания предыдущей установки');
   modBusy = true;
   try {
     const dir = serverDir(type, version);
     const flavor = flavorFor(type, version, loader);
-    const added = await mods.installProject({ type, mc: version, dir, projectId, kind, flavor, onLog: log });
+    const added = await mods.installProject({ type, mc: version, dir, projectId, kind, flavor, onLog: log, bySlug: !!bySlug });
     if (added.length) {
       const running = current && current.type === type && current.version === version;
       log(`Установлено: ${added.join(', ')}.${running ? ' Перезапустите сервер, чтобы моды загрузились.' : ''}`);
@@ -983,6 +1335,18 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.on('close', (e) => {
+    // Сервер работает — окно прячется в трей, сервер не останавливается.
+    if (!quitRequested && child && prefs().tray) {
+      e.preventDefault();
+      win.hide();
+      ensureTray();
+      if (!trayHinted) {
+        trayHinted = true;
+        notify('Сервер продолжает работать', 'Лаунчер свёрнут в область уведомлений. Открыть его — значок рядом с часами.', true);
+      }
+    }
+  });
   win.on('closed', () => {
     win = null;
   });
@@ -992,11 +1356,8 @@ function createWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
+  app.on('second-instance', () => showWindow());
+  app.setAppUserModelId('local.mcserverlauncher');
   app.whenReady().then(() => {
     createWindow();
     updater.init(send);
@@ -1015,6 +1376,7 @@ function whatsNewOnce() {
 
 // При закрытии окна сначала аккуратно останавливаем сервер, чтобы мир сохранился.
 app.on('before-quit', (e) => {
+  quitRequested = true;
   if (child) {
     e.preventDefault();
     quitting = true;
