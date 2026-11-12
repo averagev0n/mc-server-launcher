@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src https://cdn.modrinth.com">
+  <title>Лаунчер сервера Minecraft</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="side">
+    <header class="brand">
+      <div class="cube" aria-hidden="true"></div>
+      <div>
+        <h1>Сервер Minecraft</h1>
+        <p id="status" class="status" data-state="stopped">Остановлен</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Сервер</h2>
+      <label class="field">
+        <span>Тип</span>
+        <select id="type">
+          <optgroup label="Без модов">
+            <option value="vanilla">Vanilla — официальный</option>
+            <option value="paper">Paper — с плагинами</option>
+          </optgroup>
+          <optgroup label="С модами">
+            <option value="fabric">Fabric</option>
+            <option value="forge">Forge</option>
+            <option value="neoforge">NeoForge</option>
+          </optgroup>
+          <optgroup label="Моды + плагины (гибриды)">
+            <option value="youer">Youer — на NeoForge</option>
+            <option value="arclight">Arclight — на любом загрузчике</option>
+            <option value="mohist">Mohist — на Forge</option>
+          </optgroup>
+        </select>
+      </label>
+      <p class="hint" id="type-hint"></p>
+      <label class="field">
+        <span>Версия игры</span>
+        <select id="version"></select>
+      </label>
+      <label class="field" id="loader-row" hidden>
+        <span id="loader-label">Версия загрузчика</span>
+        <select id="loader"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="pre">
+        <span>Показывать тестовые версии</span>
+      </label>
+      <p class="hint" id="version-hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Запуск</h2>
+      <div class="grid">
+        <label class="field">
+          <span>Память, ГБ</span>
+          <input type="number" id="ram" min="1" max="64" step="1" value="2" inputmode="numeric">
+        </label>
+        <label class="field">
+          <span>Java</span>
+          <select id="java"></select>
+        </label>
+      </div>
+      <p class="hint" id="ram-hint"></p>
+      <p class="hint" id="java-hint"></p>
+      <label class="check" id="eula-row">
+        <input type="checkbox" id="eula">
+        <span>Я принимаю <a href="#" id="eula-link">лицензионное соглашение Minecraft</a></span>
+      </label>
+      <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
+      <div class="row">
+        <button type="button" id="start" class="btn primary">Запустить</button>
+        <button type="button" id="stop" class="btn danger" disabled>Остановить</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Настройки сервера</h2>
+      <div class="grid">
+        <label class="field">
+          <span>Порт</span>
+          <input type="number" id="p-port" min="1" max="65535">
+        </label>
+        <label class="field">
+          <span>Игроков</span>
+          <input type="number" id="p-players" min="1" max="1000">
+        </label>
+        <label class="field">
+          <span>Режим</span>
+          <select id="p-gamemode">
+            <option value="survival">Выживание</option>
+            <option value="creative">Творческий</option>
+            <option value="adventure">Приключение</option>
+            <option value="spectator">Наблюдатель</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Сложность</span>
+          <select id="p-difficulty">
+            <option value="peaceful">Мирная</option>
+            <option value="easy">Лёгкая</option>
+            <option value="normal">Нормальная</option>
+            <option value="hard">Сложная</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <span>Описание в списке серверов</span>
+        <input type="text" id="p-motd" maxlength="120">
+      </label>
+      <label class="check">
+        <input type="checkbox" id="p-online">
+        <span>Пускать только лицензионные аккаунты</span>
+      </label>
+      <div class="row">
+        <button type="button" id="save" class="btn">Сохранить</button>
+        <button type="button" id="folder" class="btn">Папка сервера</button>
+      </div>
+      <p class="hint" id="props-hint"></p>
+    </section>
+
+    <footer class="side-foot">
+      <span id="app-version"></span>
+      <button type="button" id="check-updates" class="link-btn" hidden>Проверить обновления</button>
+    </footer>
+  </aside>
+
+  <main class="main">
+    <div id="update" class="update" hidden role="status">
+      <div class="update-row">
+        <div class="update-text">
+          <b id="update-title"></b>
+          <span id="update-sub" class="meta"></span>
+        </div>
+        <button type="button" id="update-toggle" class="btn small">Что нового</button>
+        <button type="button" id="update-action" class="btn small primary"></button>
+        <button type="button" id="update-close" class="btn small" aria-label="Скрыть" title="Скрыть">✕</button>
+      </div>
+      <div id="update-notes" class="update-notes" hidden></div>
+    </div>
+
+    <div class="topbar">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
+        <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
+        <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
+      </div>
+      <span id="address" class="address"></span>
+    </div>
+
+    <section id="view-console" class="view" role="tabpanel" aria-labelledby="tab-console">
+      <div id="log" class="log" role="log" aria-live="off"></div>
+      <form id="cmd-form" class="cmd">
+        <input type="text" id="cmd" placeholder="Команда серверу, например: op Ник" autocomplete="off" disabled>
+        <button type="submit" id="send" class="btn primary" disabled>Отправить</button>
+        <button type="button" id="clear" class="btn">Очистить</button>
+      </form>
+    </section>
+
+    <section id="view-mods" class="view" role="tabpanel" aria-labelledby="tab-mods" hidden>
+      <div id="mods-off" class="empty" hidden>
+        <p class="empty-title">Vanilla-сервер не поддерживает моды</p>
+        <p>Выберите тип <b>Fabric</b>, <b>Forge</b> или <b>NeoForge</b> для модов — или <b>Paper</b> для плагинов.</p>
+      </div>
+      <div id="mods-on" class="mods">
+        <div class="mods-head">
+          <div class="seg" role="tablist" id="mods-kind" hidden>
+            <button type="button" class="seg-btn" data-mkind="mod" role="tab">Моды</button>
+            <button type="button" class="seg-btn" data-mkind="plugin" role="tab">Плагины</button>
+          </div>
+          <div class="seg" role="tablist">
+            <button type="button" class="seg-btn" data-mview="search" role="tab">Найти</button>
+            <button type="button" class="seg-btn" data-mview="installed" role="tab" id="mview-installed">Установленные</button>
+          </div>
+          <p class="hint" id="mods-hint"></p>
+        </div>
+
+        <div id="mods-search" class="mods-pane">
+          <form id="search-form" class="cmd">
+            <input type="search" id="search" placeholder="Название мода, например: JEI или Create" autocomplete="off">
+            <button type="submit" class="btn primary">Найти</button>
+          </form>
+          <p class="hint" id="search-hint"></p>
+          <div id="results" class="list"></div>
+          <button type="button" id="more" class="btn more" hidden>Показать ещё</button>
+        </div>
+
+        <div id="mods-installed" class="mods-pane" hidden>
+          <div class="row-between">
+            <p class="hint" id="installed-hint"></p>
+            <button type="button" id="mods-folder" class="btn small">Открыть папку</button>
+          </div>
+          <div id="installed" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-configs" class="view" role="tabpanel" aria-labelledby="tab-configs" hidden>
+      <div id="cfg-empty" class="empty" hidden>
+        <p class="empty-title">Файлов настроек пока нет</p>
+        <p id="cfg-empty-text"></p>
+      </div>
+      <div id="cfg-main" class="cfg">
+        <aside class="cfg-files">
+          <input type="search" id="cfg-find-file" placeholder="Найти файл" autocomplete="off">
+          <div id="cfg-tree" class="cfg-tree"></div>
+          <button type="button" id="cfg-refresh" class="btn small">Обновить список</button>
+        </aside>
+
+        <div class="cfg-editor">
+          <div id="cfg-none" class="empty">
+            <p class="empty-title">Выберите файл слева</p>
+            <p>Настройки откроются в виде формы с описаниями из файла.</p>
+          </div>
+          <div id="cfg-open" class="cfg-open" hidden>
+            <div class="cfg-head">
+              <div class="cfg-title">
+                <b id="cfg-name"></b>
+                <span id="cfg-path" class="meta"></span>
+              </div>
+              <div class="seg" role="tablist">
+                <button type="button" class="seg-btn" data-cmode="form" role="tab">Настройки</button>
+                <button type="button" class="seg-btn" data-cmode="text" role="tab">Текст</button>
+              </div>
+            </div>
+            <div class="cfg-tools">
+              <input type="search" id="cfg-filter" placeholder="Найти настройку" autocomplete="off">
+              <button type="button" id="cfg-external" class="btn small">Открыть в программе</button>
+              <button type="button" id="cfg-restore" class="btn small" title="Вернуть файл к состоянию до последнего сохранения">Вернуть прошлую</button>
+            </div>
+            <p class="hint" id="cfg-hint"></p>
+            <div id="cfg-form" class="cfg-form"></div>
+            <textarea id="cfg-text" class="cfg-text" spellcheck="false" hidden></textarea>
+            <div class="cfg-actions">
+              <p class="hint" id="cfg-status"></p>
+              <button type="button" id="cfg-restart" class="btn" hidden>Перезапустить сервер</button>
+              <button type="button" id="cfg-discard" class="btn">Отменить</button>
+              <button type="button" id="cfg-save" class="btn primary">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
