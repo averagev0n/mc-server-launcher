@@ -3,3 +3,4 @@ servers/
 dist/
 .oil-ui/
 hs_err_pid*.log
+promo/
