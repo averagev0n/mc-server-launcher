@@ -29,6 +29,12 @@ const tar = require('tar');
 const { createRunner, freePort } = require('./lib/runner');
 const velocity = require('./lib/velocity');
 const power = require('./lib/power');
+const playercard = require('./lib/playercard');
+const regions = require('./lib/regions');
+const lag = require('./lib/lag');
+const datapacks = require('./lib/datapacks');
+const fun = require('./lib/fun');
+const backupcheck = require('./lib/backupcheck');
 const history = require('./lib/history');
 const chat = require('./lib/chat');
 const singleplayer = require('./lib/singleplayer');
@@ -69,6 +75,7 @@ const isModded = (type) => core.LOADER_TYPES.includes(type);
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  widgetSend(channel, payload);
 }
 const log = (text, kind = 'info') => send('log', { text, kind });
 function setState(next) {
@@ -254,6 +261,11 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
         const line = cleanLine(raw);
         if (!line && raw.trim()) continue;
         if (state === 'starting' && /Done \(/.test(line)) setState('running');
+        // Ответы на тихие запросы (поиск причин лагов, координаты игрока) — тоже.
+        if (quietUntil > Date.now() && lag.REPLY_RE.test(line)) {
+          quietLine(line);
+          continue;
+        }
         // Ответ на тихий запрос TPS — в консоль не показываем.
         if (tpsUntil > Date.now() && tps.isTpsLine(line)) {
           handleTpsLine(line);
@@ -383,6 +395,7 @@ function waitForLog(re, ms) {
 }
 
 function addLogLine(line) {
+  if (/ has (made the advancement|completed the challenge|reached the goal) \[/.test(line)) achLine(line);
   const said = chat.parseChat(line);
   if (said) addChat({ ...said, at: Date.now() });
   if (/chunky/i.test(line)) chunkyLine(line);
@@ -708,6 +721,7 @@ function trayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Открыть лаунчер', click: showWindow },
+      { label: 'Мини-окно', click: () => openWidget() },
       { label: tip, enabled: false },
       { type: 'separator' },
       { label: 'Остановить сервер', enabled: !!child && state !== 'stopping', click: () => stopServer() },
@@ -765,6 +779,7 @@ function onState(next) {
     if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🟢 Сервер **${escapeMd(title)}** запущен (Minecraft ${version}).`);
     if (s.net.upnp) openUpnp(Number(core.readProps(serverDir(type, version))['server-port']) || 25565).catch(() => {});
     if (applyGamerules(type, version)) log('Правила игры из лаунчера применены.');
+    funResume();
     if (s.tunnel.auto && s.tunnel.address && fs.existsSync(PLAYIT_EXE()) && !playitProc) {
       startPlayit(false);
       playitAuto = true;
@@ -775,6 +790,7 @@ function onState(next) {
 
 function onPlayer(name, joined) {
   if (!current) return;
+  achPlayer(name, joined);
   if (tracker) {
     if (joined) {
       tracker.join(name);
@@ -799,6 +815,8 @@ function onStopped({ dir, type, version, code, stoppedByUser }) {
   tracker = null;
   if (hist) hist.flush();
   hist = null;
+  funStopTimers();
+  joinAt.clear();
   lastTps = null;
   if (playitAuto) stopPlayit();
   const s = backup.readSettings(dir);
@@ -2094,6 +2112,682 @@ handle('tg:openBot', () => {
 });
 app.on('will-quit', () => tg.stop());
 
+// ---- тихие запросы к серверу: ответы не показываются в консоли ----
+
+let quietUntil = 0;
+const quietWaiters = [];
+function quietLine(line) {
+  const w = quietWaiters.shift();
+  if (!w) return;
+  clearTimeout(w.timer);
+  w.resolve(line);
+}
+/** Отправить команду и дождаться её ответа (по одной за раз). Пустая строка — сервер не ответил. */
+function quietAsk(cmd, ms = 3000) {
+  return new Promise((resolve) => {
+    const w = { resolve };
+    w.timer = setTimeout(() => {
+      const i = quietWaiters.indexOf(w);
+      if (i >= 0) quietWaiters.splice(i, 1);
+      resolve('');
+    }, ms);
+    quietWaiters.push(w);
+    quietUntil = Date.now() + ms + 500;
+    runCmd(cmd);
+  });
+}
+
+// ---- карточка игрока ----
+
+const liveFor = (type, version) => isCurrent(type, version) && state === 'running';
+
+handle('player:card', async ({ type, version, name }) => {
+  if (!players.NAME_RE.test(String(name || ''))) throw new Error('Некорректный ник');
+  const dir = serverDir(type, version);
+  const props = core.readProps(dir);
+  const level = props['level-name'] || 'world';
+  const offline = props['online-mode'] === 'false';
+  const uuid = playercard.uuidFromCache(dir, name) || (offline ? players.offlineUuid(name) : null);
+  const isOnline = liveFor(type, version) && [...online].some((n) => n.toLowerCase() === name.toLowerCase());
+  let data = null;
+  try {
+    data = uuid ? playercard.read(dir, level, uuid) : null;
+  } catch {
+    data = null;
+  }
+  if (isOnline) {
+    const pos = lag.parseReply('pos', await quietAsk(`data get entity ${name} Pos`));
+    if (pos) data = { ...(data || { items: [] }), pos, savedAt: Date.now() };
+  }
+  const stats = playtime.list(dir).find((p) => p.name.toLowerCase() === name.toLowerCase()) || null;
+  const lists = players.readLists(dir);
+  const has = (l) => l.some((x) => (x.name || '').toLowerCase() === name.toLowerCase());
+  return { name, uuid, online: isOnline, data, stats, op: has(lists.ops), banned: has(lists.bans) };
+});
+
+handle('player:do', ({ type, version, name, action, item, count, target, mode }) => {
+  if (!players.NAME_RE.test(String(name || ''))) throw new Error('Некорректный ник');
+  if (!liveFor(type, version)) throw new Error('Сервер не запущен');
+  if (action === 'give') {
+    const id = String(item || '').trim().toLowerCase().replace(/\s+/g, '_');
+    if (!/^([a-z0-9_.-]+:)?[a-z0-9_./-]{1,64}$/.test(id)) throw new Error('Название предмета — латиницей, например diamond или minecraft:oak_log');
+    const n = Math.round(Number(count) || 1);
+    if (n < 1 || n > 2304) throw new Error('Количество — от 1 до 2304');
+    runCmd(`give ${name} ${id} ${n}`);
+  } else if (action === 'tp') {
+    const t = String(target || '').trim();
+    if (players.NAME_RE.test(t)) runCmd(`tp ${name} ${t}`);
+    else if (/^-?\d{1,8} -?\d{1,4} -?\d{1,8}$/.test(t)) runCmd(`tp ${name} ${t}`);
+    else throw new Error('Укажите ник другого игрока или координаты «x y z»');
+  } else if (action === 'mode') {
+    if (!['survival', 'creative', 'adventure', 'spectator'].includes(mode)) throw new Error('Неизвестный режим');
+    runCmd(`gamemode ${mode} ${name}`);
+  } else if (action === 'kick') {
+    runCmd(`kick ${name}`);
+  } else throw new Error('Неизвестное действие');
+});
+
+// ---- граница мира ----
+
+function chunkyInstalled(dir) {
+  for (const sub of ['plugins', 'mods']) {
+    try {
+      if (fs.readdirSync(path.join(dir, sub)).some((f) => /chunky/i.test(f) && /\.jar$/i.test(f))) return true;
+    } catch {
+      /* папки нет */
+    }
+  }
+  return false;
+}
+handle('border:apply', ({ type, version, size, x, z, pregen }) => {
+  if (!liveFor(type, version)) throw new Error('Сначала запустите сервер');
+  const s = Math.round(Number(size));
+  if (!Number.isInteger(s) || s < 50 || s > 59999968) throw new Error('Размер — от 50 блоков');
+  const cx = Math.round(Number(x) || 0);
+  const cz = Math.round(Number(z) || 0);
+  if (Math.abs(cx) > 29999984 || Math.abs(cz) > 29999984) throw new Error('Центр слишком далеко');
+  const dir = serverDir(type, version);
+  if (pregen) {
+    if (!chunkyInstalled(dir)) throw new Error('Для прогрузки нужен Chunky — установите его в карточке «Прогрузить мир заранее» ниже');
+    if (s > 100000) throw new Error('Прогрузить можно мир размером до 100 000 блоков');
+  }
+  runCmd(`worldborder center ${cx} ${cz}`);
+  runCmd(`worldborder set ${s}`);
+  if (pregen) {
+    runCmd(`chunky center ${cx} ${cz}`);
+    runCmd('chunky shape square');
+    runCmd(`chunky radius ${Math.ceil(s / 2)}`);
+    runCmd('chunky start');
+    chunky = { pct: 0, eta: '', world: '', done: false };
+    send('chunky', chunky);
+  }
+  return { chunky: !!pregen };
+});
+handle('border:remove', ({ type, version }) => {
+  if (!liveFor(type, version)) throw new Error('Сначала запустите сервер');
+  runCmd('worldborder set 59999968');
+});
+
+// ---- копии: что изменилось и откат части мира ----
+
+handle('regions:compare', async ({ type, version, file }) => {
+  const dir = serverDir(type, version);
+  const res = await regions.compare(dir, backup.backupPath(dir, file), backup.worldDirs(dir));
+  return { total: res.length, list: res.slice(0, 60) };
+});
+handle('regions:restore', async ({ type, version, file, dim, list, x, z, r }) => {
+  needStopped(type, version, 'вернуть часть мира');
+  if (runner.has(bgKey(type, version))) throw new Error('Остановите сервер, чтобы вернуть часть мира');
+  if (!['overworld', 'nether', 'end'].includes(dim)) throw new Error('Неизвестное измерение');
+  const dir = serverDir(type, version);
+  const src = backup.backupPath(dir, file);
+  let regs;
+  if (Array.isArray(list) && list.length) {
+    regs = list.map((p) => [Number(p[0]), Number(p[1])]);
+    if (regs.length > 64 || regs.some(([a, b]) => !Number.isInteger(a) || !Number.isInteger(b))) throw new Error('Некорректный список областей');
+  } else {
+    const [cx, cz, rr] = [Number(x), Number(z), Number(r)];
+    if (![cx, cz, rr].every(Number.isFinite) || rr < 0) throw new Error('Укажите координаты и радиус числами');
+    regs = regions.regionsAround(Math.round(cx), Math.round(cz), Math.round(rr));
+  }
+  const level = core.readProps(dir)['level-name'] || 'world';
+  log('Сохраняю текущий мир копией перед откатом части мира…');
+  const safety = await backup.create(dir, 'before-restore');
+  const res = await regions.restore(dir, src, level, dim, regs);
+  send('backups', { dir });
+  log(`Часть мира возвращена из копии ${file}: областей ${regs.length}.`);
+  return { ...res, regions: regs.length, safety: safety && safety.file };
+});
+
+// ---- почему тормозит ----
+
+let lagBusy = false;
+let lastLag = null;
+let lowTps = 0;
+let lastAutoLag = 0;
+
+async function lagCheck() {
+  if (!child || state !== 'running' || !current) throw new Error('Сервер не запущен');
+  if (!lag.supported(current.version)) throw new Error('Поиск причин работает с Minecraft 1.13 и новее');
+  if (lagBusy) throw new Error('Уже ищу — подождите несколько секунд');
+  lagBusy = true;
+  try {
+    const names = [...online].filter((n) => players.NAME_RE.test(n)).slice(0, 20);
+    const r = {};
+    for (const q of lag.queries(names)) r[q.key] = lag.parseReply(q.kind, await quietAsk(q.cmd));
+    const hints = lag.analyze(r, names);
+    if (chunky && !chunky.done) hints.unshift({ level: 'info', text: 'Сейчас идёт прогрузка мира (Chunky) — пока она не закончится, сервер нагружен сильнее обычного.' });
+    lastLag = { at: Date.now(), server: { ...current }, tps: lastTps ? lastTps.tps : null, total: r.total, hints };
+    send('lag', lastLag);
+    return lastLag;
+  } finally {
+    lagBusy = false;
+  }
+}
+// Плавность держится ниже 15 полминуты — ищем причину сами (не чаще раза в 15 минут).
+setInterval(() => {
+  if (!child || state !== 'running' || !lastTps) {
+    lowTps = 0;
+    return;
+  }
+  lowTps = lastTps.tps < 15 ? lowTps + 1 : 0;
+  if (lowTps < 3 || Date.now() - lastAutoLag < 15 * 60000 || !current || !lag.supported(current.version)) return;
+  lastAutoLag = Date.now();
+  lagCheck()
+    .then((l) => log(`Сервер тормозит (${String(Math.round(l.tps * 10) / 10).replace('.', ',')} TPS). ${l.hints[0].text} Подробнее — «Обслуживание» → «Почему тормозит».`, 'error'))
+    .catch(() => {});
+}, 10000);
+handle('lag:check', () => lagCheck());
+handle('lag:get', () => lastLag);
+handle('lag:fix', ({ fix }) => {
+  const cmd = lag.FIXES[fix];
+  if (!cmd) throw new Error('Неизвестное действие');
+  if (!child || state !== 'running') throw new Error('Сервер не запущен');
+  runCmd(cmd);
+  log(fix === 'items' ? 'Предметы с земли убраны.' : 'Сферы опыта убраны.');
+});
+
+// ---- новая версия Minecraft ----
+
+const mcnewCache = new Map();
+handle('mcnew:check', async ({ type, version, loader, force }) => {
+  const key = `${type}-${version}`;
+  const c = mcnewCache.get(key);
+  if (c && !force && Date.now() - c.at < 6 * 3600 * 1000) return c.value;
+  const list = (await core.listVersions(type, false)).filter((v) => !v.pre).map((v) => v.id);
+  const i = list.indexOf(version);
+  let value = { current: version, latest: null };
+  if (i > 0) {
+    const latest = list[0];
+    const dir = serverDir(type, version);
+    const ready = [];
+    const notReady = [];
+    let unknown = 0;
+    for (const kind of mods.kindsFor(type)) {
+      const res = await mods.checkUpdates({ type, mc: latest, dir, kind, flavor: flavorFor(type, version, loader) });
+      for (const x of res) {
+        if (!x.known) unknown++;
+        else if (x.latest) ready.push(x.title || x.file);
+        else notReady.push(x.title || x.file);
+      }
+    }
+    value = { current: version, latest, behind: i, ready, notReady, unknown };
+  }
+  mcnewCache.set(key, { at: Date.now(), value });
+  return value;
+});
+
+// ---- датапаки ----
+
+const levelOf = (dir) => (core.readProps(dir)['level-name'] || 'world').trim() || 'world';
+const dpReload = (type, version) => {
+  if (!liveFor(type, version)) return false;
+  runCmd('reload');
+  return true;
+};
+handle('dp:search', ({ version, query, offset }) => datapacks.search({ mc: version, query, offset }));
+handle('dp:list', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  return { list: datapacks.list(dir, levelOf(dir)), hasWorld: backup.worldDirs(dir).length > 0, live: liveFor(type, version) };
+});
+handle('dp:install', async ({ type, version, projectId, bySlug }) => {
+  const dir = serverDir(type, version);
+  const added = await datapacks.install({ mc: version, dir, level: levelOf(dir), projectId, bySlug: !!bySlug, onLog: log });
+  return { added, reloaded: dpReload(type, version) };
+});
+handle('dp:add', async ({ type, version, folder }) => {
+  const dir = serverDir(type, version);
+  const r = await dialog.showOpenDialog(win, {
+    title: folder ? 'Папка датапака (внутри есть pack.mcmeta)' : 'Файлы датапаков',
+    properties: folder ? ['openDirectory'] : ['openFile', 'multiSelections'],
+    filters: folder ? undefined : [{ name: 'Датапак', extensions: ['zip'] }],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  const added = r.filePaths.map((p) => datapacks.addLocal(dir, levelOf(dir), p));
+  return { added, reloaded: dpReload(type, version) };
+});
+handle('dp:remove', async ({ type, version, file }) => {
+  const dir = serverDir(type, version);
+  await shell.trashItem(datapacks.packPath(dir, levelOf(dir), String(file || '')));
+  datapacks.forget(dir, file);
+  return { reloaded: dpReload(type, version) };
+});
+handle('dp:open', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const f = datapacks.folder(dir, levelOf(dir));
+  fs.mkdirSync(f, { recursive: true });
+  shell.openPath(f);
+});
+
+// ---- шаблоны миров ----
+
+const TEMPLATES = {
+  build: { props: { 'level-type': 'flat', gamemode: 'creative', difficulty: 'peaceful' }, rules: { doDaylightCycle: false, doWeatherCycle: false, keepInventory: true } },
+  void: { props: { 'level-type': 'flat' }, voidWorld: true, rules: { keepInventory: true } },
+  terralith: { props: {}, pack: 'terralith' },
+  tectonic: { props: {}, pack: 'tectonic' },
+};
+handle('world:template', async ({ type, version, template, seed }) => {
+  const t = TEMPLATES[template];
+  if (!t) throw new Error('Неизвестный шаблон');
+  const dir = serverDir(type, version);
+  if (backup.worldDirs(dir).length) throw new Error('Мир уже создан — шаблон применяется только к новому миру');
+  const props = { ...t.props, 'level-seed': String(seed || '') };
+  if (props['level-type']) props['level-type'] = servers.levelTypeValue(version, props['level-type']);
+  if (t.voidWorld) {
+    if (!/^(1\.(19|2\d)|[2-9]\d\.)/.test(version)) throw new Error('Пустой мир с платформой — для Minecraft 1.19 и новее');
+    props['generator-settings'] = JSON.stringify({ layers: [{ block: 'minecraft:air', height: 1 }], biome: 'minecraft:the_void', features: true, lakes: false, structure_overrides: [] });
+  }
+  core.writeProps(dir, props);
+  if (t.rules) backup.writeSettings(dir, { gamerules: { ...backup.readSettings(dir).gamerules, ...t.rules } });
+  if (t.pack) {
+    log(`Шаблон мира: ставлю датапак ${t.pack}…`);
+    await datapacks.install({ mc: version, dir, level: levelOf(dir), projectId: t.pack, bySlug: true, onLog: log });
+  }
+});
+
+// ---- игровые события ----
+
+const funTimers = new Map(); // событие → таймер окончания
+const FUN_FILE = (dir) => path.join(dir, 'mcl-events.json');
+function funPending(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(FUN_FILE(dir), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+function funSavePending(dir, data) {
+  if (Object.keys(data).length) fs.writeFileSync(FUN_FILE(dir), JSON.stringify(data, null, 2), 'utf8');
+  else fs.rmSync(FUN_FILE(dir), { force: true });
+}
+function funState(type, version) {
+  const dir = serverDir(type, version);
+  const p = isCurrent(type, version) ? funPending(dir) : {};
+  return {
+    active: Object.entries(p).map(([id, e]) => ({ id, title: fun.EVENTS[id] ? fun.EVENTS[id].title : id, until: e.until })),
+    achievements: fun.list(dir),
+    enabled: backup.readSettings(dir).achievements,
+  };
+}
+function funEnd(id, quiet) {
+  clearTimeout(funTimers.get(id));
+  funTimers.delete(id);
+  if (!current) return;
+  const dir = serverDir(current.type, current.version);
+  const p = funPending(dir);
+  const e = p[id];
+  if (!e) return;
+  if (child && state === 'running') {
+    for (const c of e.end) runCmd(c);
+    if (!quiet && e.endSay) runCmd(fun.tellAll(e.endSay, 'yellow'));
+    delete p[id];
+    funSavePending(dir, p);
+  }
+  send('fun', funState(current.type, current.version));
+}
+handle('fun:event', ({ type, version, id, arg }) => {
+  if (!liveFor(type, version)) throw new Error('Сначала запустите сервер');
+  const ev = fun.EVENTS[id];
+  if (!ev) throw new Error('Неизвестное событие');
+  const dir = serverDir(type, version);
+  if (funPending(dir)[id]) throw new Error('Это событие уже идёт');
+  const b = ev.build(version, arg);
+  for (const c of b.start) runCmd(c);
+  runCmd(fun.tellAll(b.say));
+  if (b.end && b.minutes) {
+    const p = funPending(dir);
+    p[id] = { end: b.end, endSay: b.endSay, until: Date.now() + b.minutes * 60000 };
+    funSavePending(dir, p);
+    funTimers.set(id, setTimeout(() => funEnd(id), b.minutes * 60000));
+  }
+  log(`Событие «${ev.title}» запущено.`);
+  return funState(type, version);
+});
+handle('fun:stop', ({ type, version, id }) => {
+  if (!liveFor(type, version)) throw new Error('Сервер не запущен');
+  funEnd(String(id));
+  return funState(type, version);
+});
+handle('fun:get', ({ type, version }) => funState(type, version));
+handle('fun:setAchievements', ({ type, version, on }) => {
+  backup.writeSettings(serverDir(type, version), { achievements: !!on });
+  return funState(type, version);
+});
+/** Сервер запустился: события, которые не успели закончиться, — завершить или продолжить. */
+function funResume() {
+  if (!current) return;
+  const dir = serverDir(current.type, current.version);
+  const p = funPending(dir);
+  for (const [id, e] of Object.entries(p)) {
+    const left = e.until - Date.now();
+    if (left <= 0) {
+      for (const c of e.end) runCmd(c);
+      delete p[id];
+    } else funTimers.set(id, setTimeout(() => funEnd(id), left));
+  }
+  funSavePending(dir, p);
+}
+function funStopTimers() {
+  for (const t of funTimers.values()) clearTimeout(t);
+  funTimers.clear();
+}
+
+// ---- достижения сервера ----
+
+const joinAt = new Map();
+function achAnnounce(a) {
+  runCmd(fun.tellAll('★ ' + a.text, 'gold'));
+  log('Достижение: ' + a.text);
+  tgNotify('players', '🏆 ' + a.text);
+  const s = currentSettings();
+  if (s && s.discord.url && s.discord.players) discord.send(s.discord.url, '🏆 ' + escapeMd(a.text));
+  if (current) send('fun', funState(current.type, current.version));
+}
+function achLine(line) {
+  if (!current || state !== 'running') return;
+  const dir = serverDir(current.type, current.version);
+  if (!backup.readSettings(dir).achievements) return;
+  const a = fun.onLine(dir, line);
+  if (a) achAnnounce(a);
+}
+function achPlayer(name, joined) {
+  if (joined) joinAt.set(name, Date.now());
+  else joinAt.delete(name);
+}
+setInterval(() => {
+  if (!child || state !== 'running' || !current || !joinAt.size) return;
+  const dir = serverDir(current.type, current.version);
+  if (!backup.readSettings(dir).achievements) return;
+  const saved = Object.fromEntries(playtime.list(dir).map((p) => [p.name, p.total]));
+  const totals = {};
+  for (const [name, at] of joinAt) totals[name] = (saved[name] || 0) + (Date.now() - at);
+  for (const a of fun.onHours(dir, totals)) achAnnounce(a);
+}, 60000);
+
+// ---- проверка копий ----
+
+let verifyBusy = false;
+async function verifyBackup(dir, file) {
+  if (verifyBusy) throw new Error('Копия уже проверяется');
+  verifyBusy = true;
+  try {
+    const r = await backupcheck.verify(backup.backupPath(dir, file));
+    const res = { ok: true, at: Date.now(), regions: r.regions, files: r.files };
+    backupcheck.saveState(dir, file, res);
+    return res;
+  } catch (e) {
+    const res = { ok: false, at: Date.now(), error: e.message };
+    backupcheck.saveState(dir, file, res);
+    return res;
+  } finally {
+    verifyBusy = false;
+  }
+}
+handle('bk:verify', async ({ type, version, file }) => {
+  const dir = serverDir(type, version);
+  const list = backup.list(dir);
+  const f = file || (list[0] && list[0].file);
+  if (!f) throw new Error('Копий пока нет');
+  return { file: f, ...(await verifyBackup(dir, f)) };
+});
+handle('bk:state', ({ type, version }) => backupcheck.readState(serverDir(type, version)));
+// Раз в час: если самая свежая копия сервера не проверялась, а прошлая проверка была больше недели назад, — проверить.
+async function verifyTick() {
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(ROOT, d.name));
+  } catch {
+    return;
+  }
+  for (const dir of dirs) {
+    if (backupBusy || verifyBusy) return;
+    let list;
+    try {
+      list = backup.list(dir);
+    } catch {
+      continue;
+    }
+    if (!list.length) continue;
+    const st = backupcheck.readState(dir);
+    const last = Math.max(0, ...Object.values(st).map((x) => x.at || 0));
+    if (st[list[0].file] || Date.now() - last < 7 * 24 * 3600 * 1000) continue;
+    const r = await verifyBackup(dir, list[0].file).catch(() => null);
+    if (r && !r.ok) {
+      const name = path.basename(dir);
+      log(`Копия мира ${list[0].file} (${name}) повреждена: ${r.error}. Сделайте новую копию.`, 'error');
+      notify('Копия мира повреждена', `${name}: ${r.error}. Сделайте новую копию.`, true);
+      tgNotify('crash', `⚠️ Копия мира ${name} повреждена: ${r.error}`);
+    }
+  }
+}
+setInterval(verifyTick, 3600 * 1000);
+setTimeout(verifyTick, 5 * 60 * 1000);
+
+// ---- открытка-приглашение ----
+
+handle('invite:data', async ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const props = core.readProps(dir);
+  const iconFile = path.join(dir, 'server-icon.png');
+  const icon = fs.existsSync(iconFile) ? fs.readFileSync(iconFile) : fs.readFileSync(path.join(__dirname, 'build', 'icon.png'));
+  const s = backup.readSettings(dir);
+  return {
+    title: s.name || serverTitle(type, version),
+    version,
+    motd: String(props.motd || '').replace(/§./g, ''),
+    tunnel: s.tunnel.address || '',
+    port: Number(props['server-port']) || 25565,
+    icon: new Uint8Array(icon),
+    modded: isModded(type),
+  };
+});
+function pngFromData(dataUrl) {
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) throw new Error('Некорректная картинка');
+  return Buffer.from(m[1], 'base64');
+}
+handle('invite:copy', ({ png }) => {
+  clipboard.writeImage(nativeImage.createFromBuffer(pngFromData(png)));
+});
+handle('invite:save', async ({ png, name }) => {
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Сохранить открытку',
+    defaultPath: path.join(app.getPath('desktop'), singleplayer.safeName(name || 'Приглашение') + '.png'),
+    filters: [{ name: 'Картинка PNG', extensions: ['png'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, pngFromData(png));
+  shell.showItemInFolder(r.filePath);
+  return r.filePath;
+});
+
+// ---- карта мира ----
+
+const { Worker } = require('worker_threads');
+let mapWorker = null;
+let mapSeq = 0;
+const mapJobs = new Map();
+const mapCache = new Map(); // файл|mtime|scale → { size, rgba }
+function worker() {
+  if (mapWorker) return mapWorker;
+  // В собранной программе поток читает файлы из распакованной копии (app.asar.unpacked).
+  const file = path.join(__dirname, 'lib', 'mapworker.js').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+  mapWorker = new Worker(file);
+  mapWorker.on('message', (m) => {
+    const job = mapJobs.get(m.id);
+    if (!job) return;
+    mapJobs.delete(m.id);
+    if (m.error) job.reject(new Error(m.error));
+    else job.resolve({ size: m.size, rgba: m.rgba });
+  });
+  mapWorker.on('error', (e) => {
+    for (const j of mapJobs.values()) j.reject(e);
+    mapJobs.clear();
+    mapWorker = null;
+  });
+  mapWorker.unref();
+  return mapWorker;
+}
+function mapDimDir(dir, dim) {
+  const level = levelOf(dir);
+  for (const p of regions.prefixesFor(level, dim)) {
+    const full = path.join(dir, p, 'region');
+    if (fs.existsSync(full)) return full;
+  }
+  return null;
+}
+handle('map:regions', ({ type, version, dim }) => {
+  if (!['overworld', 'end'].includes(dim)) throw new Error('Неизвестное измерение');
+  const dir = serverDir(type, version);
+  const rd = mapDimDir(dir, dim);
+  const list = [];
+  if (rd) {
+    for (const f of fs.readdirSync(rd)) {
+      const m = /^r\.(-?\d+)\.(-?\d+)\.mca$/.exec(f);
+      if (m && fs.statSync(path.join(rd, f)).size > 8192) list.push([Number(m[1]), Number(m[2])]);
+    }
+  }
+  // Игроки: из их файлов (где вышли) и из живого списка.
+  const level = levelOf(dir);
+  const people = [];
+  const known = playtime.list(dir).slice(0, 60);
+  for (const p of known) {
+    const uuid = playercard.uuidFromCache(dir, p.name) || (core.readProps(dir)['online-mode'] === 'false' ? players.offlineUuid(p.name) : null);
+    let d = null;
+    try {
+      d = uuid ? playercard.read(dir, level, uuid) : null;
+    } catch {
+      d = null;
+    }
+    if (!d || !d.pos) continue;
+    const pdim = /Энд/.test(d.dimension) ? 'end' : /Нижний/.test(d.dimension) ? 'nether' : 'overworld';
+    if (pdim !== dim) continue;
+    people.push({ name: p.name, x: d.pos[0], z: d.pos[2], online: liveFor(type, version) && online.has(p.name) });
+  }
+  return { list, players: people };
+});
+handle('map:tile', async ({ type, version, dim, rx, rz, scale }) => {
+  const dir = serverDir(type, version);
+  const rd = mapDimDir(dir, dim);
+  if (!rd || !Number.isInteger(rx) || !Number.isInteger(rz)) return null;
+  const sc = [1, 2, 4, 8].includes(scale) ? scale : 4;
+  const file = path.join(rd, `r.${rx}.${rz}.mca`);
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    return null;
+  }
+  const key = `${file}|${st.mtimeMs}|${sc}`;
+  if (mapCache.has(key)) return mapCache.get(key);
+  const id = ++mapSeq;
+  const res = await new Promise((resolve, reject) => {
+    mapJobs.set(id, { resolve, reject });
+    worker().postMessage({ id, file, scale: sc });
+  });
+  mapCache.set(key, res);
+  if (mapCache.size > 300) mapCache.delete(mapCache.keys().next().value);
+  return res;
+});
+
+// ---- мини-окно ----
+
+let widget = null;
+const WIDGET_EVENTS = new Set(['state', 'stats', 'players']);
+function saveWidget(patch) {
+  try {
+    const ui = readUi();
+    fs.writeFileSync(UI_FILE(), JSON.stringify({ ...ui, widget: { ...(ui.widget || {}), ...patch } }), 'utf8');
+  } catch {
+    /* не страшно */
+  }
+}
+function openWidget() {
+  if (widget && !widget.isDestroyed()) {
+    widget.showInactive();
+    return;
+  }
+  const b = readUi().widget || {};
+  widget = new BrowserWindow({
+    width: 300,
+    height: 132,
+    x: Number.isInteger(b.x) ? b.x : undefined,
+    y: Number.isInteger(b.y) ? b.y : undefined,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: themeBackground(),
+    title: 'Блокхост — мини-окно',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  widget.setAlwaysOnTop(true, 'floating');
+  widget.loadFile(path.join(__dirname, 'renderer', 'widget.html'));
+  widget.once('ready-to-show', () => widget && widget.showInactive());
+  widget.on('moved', () => {
+    if (!widget) return;
+    const [x, y] = widget.getPosition();
+    saveWidget({ x, y });
+  });
+  widget.on('closed', () => {
+    widget = null;
+    if (!quitRequested) saveWidget({ open: false });
+  });
+  saveWidget({ open: true });
+}
+function widgetSend(channel, payload) {
+  if (widget && !widget.isDestroyed() && WIDGET_EVENTS.has(channel)) widget.webContents.send(channel, payload);
+}
+handle('widget:open', () => openWidget());
+handle('widget:close', () => {
+  if (widget && !widget.isDestroyed()) widget.close();
+});
+handle('widget:main', () => showWindow());
+handle('widget:info', () => {
+  const last = readUi().lastStart;
+  return {
+    state,
+    title: current ? serverTitle(current.type, current.version) : last ? serverTitle(last.type, last.version) : null,
+    players: online.size,
+    max: maxPlayers,
+    tps: lastTps,
+    canStart: state === 'stopped' && !!last,
+  };
+});
+handle('widget:start', () => {
+  if (state !== 'stopped') throw new Error('Сервер уже работает');
+  const last = readUi().lastStart;
+  if (!last) throw new Error('Сначала запустите сервер в лаунчере');
+  return startServer({ ...last, eula: false });
+});
+app.whenReady().then(() => {
+  if ((readUi().widget || {}).open) setTimeout(openWidget, 1500);
+});
+
 // ---- оформление: светлая, тёмная или как в Windows ----
 
 const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
@@ -2473,7 +3167,7 @@ handle('open:eula', () => shell.openExternal(EULA_URL));
 handle('open:java', ({ version }) => shell.openExternal(javaUrl(version)));
 handle('open:mod', ({ slug, kind }) => {
   if (!SLUG_RE.test(String(slug))) throw new Error('Некорректная ссылка');
-  return shell.openExternal(`https://modrinth.com/${kind === 'plugin' ? 'plugin' : 'mod'}/${slug}`);
+  return shell.openExternal(`https://modrinth.com/${['plugin', 'datapack'].includes(kind) ? kind : 'mod'}/${slug}`);
 });
 
 function createWindow(hidden = false) {

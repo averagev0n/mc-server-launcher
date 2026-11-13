@@ -68,7 +68,12 @@
     },
     "portable": {
       "artifactName": "MC-Server-Launcher-Portable.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "lib/mapworker.js",
+      "lib/maprender.js",
+      "lib/nbt.js"
+    ]
   },
   "devDependencies": {
     "electron": "^45.3.1",

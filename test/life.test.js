@@ -42,6 +42,16 @@ test('расписание сохраняется в настройках сер
   assert.equal(backup.readSettings(d).power.enabled, true, 'другие настройки не сбрасывают расписание');
 });
 
+test('копии мира в одну секунду не затирают друг друга', async (t) => {
+  const d = tmpDir(t);
+  fs.mkdirSync(path.join(d, 'world'));
+  fs.writeFileSync(path.join(d, 'world', 'level.dat'), 'x');
+  const names = [];
+  for (let i = 0; i < 3; i++) names.push((await backup.create(d, i === 1 ? 'before-restore' : 'manual')).file);
+  assert.equal(new Set(names).size, 3, names.join(' '));
+  assert.equal(backup.list(d).length, 3);
+});
+
 test('нагрузка за неделю: 10-минутные корзины, старое удаляется, выводы', (t) => {
   const d = tmpDir(t);
   let now = at(2026, 11, 16, 20, 1).getTime();

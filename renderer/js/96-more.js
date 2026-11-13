@@ -86,7 +86,6 @@ $('log-search').addEventListener('input', () => {
   logQuery = $('log-search').value.trim().toLowerCase();
   applyLogFilter();
 });
-$('log-errors').addEventListener('change', () => $('log').classList.toggle('only-errors', $('log-errors').checked));
 const baseAddLog = addLog;
 addLog = function (text, kind) {
   baseAddLog(text, kind);

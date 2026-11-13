@@ -18,6 +18,7 @@
     <button type="button" id="srv-new" class="srv-row srv-new"><span class="plus" aria-hidden="true">+</span>Новый сервер</button>
 
     <div class="side-bottom">
+      <button type="button" id="widget-open" class="btn small widget-btn">Мини-окно поверх всех окон</button>
       <div class="theme">
         <span class="theme-label" id="theme-label">Тема</span>
         <div class="seg seg-full" role="radiogroup" aria-labelledby="theme-label">
@@ -144,6 +145,12 @@
                 <option value="large_biomes">Большие биомы</option>
                 <option value="amplified">Расширенный (высокие горы)</option>
                 <option value="flat">Плоский</option>
+                <optgroup label="Шаблоны">
+                  <option value="tpl:build">Для строительства (творческий, всегда день)</option>
+                  <option value="tpl:void">Пустой мир с платформой (как «остров в небе»)</option>
+                  <option value="tpl:terralith">Красивые биомы — Terralith</option>
+                  <option value="tpl:tectonic">Огромные горы и долины — Tectonic</option>
+                </optgroup>
               </select>
             </label>
             <label class="field"><span>Сид (необязательно)</span><input type="text" id="wz-seed" maxlength="64" placeholder="Случайный" autocomplete="off"></label>
@@ -194,7 +201,9 @@
           <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
           <button type="button" class="tab" role="tab" id="tab-chat" data-tab="chat">Чат</button>
           <button type="button" class="tab" role="tab" id="tab-players" data-tab="players">Игроки</button>
+          <button type="button" class="tab" role="tab" id="tab-map" data-tab="map">Карта</button>
           <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
+          <button type="button" class="tab" role="tab" id="tab-dp" data-tab="dp">Датапаки</button>
           <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
           <button type="button" class="tab" role="tab" id="tab-maint" data-tab="maint">Обслуживание</button>
           <button type="button" class="tab" role="tab" id="tab-settings" data-tab="settings">Настройки</button>
@@ -221,7 +230,8 @@
       </div>
       <div class="log-tools">
         <input type="search" id="log-search" placeholder="Найти в журнале" autocomplete="off">
-        <label class="check"><input type="checkbox" id="log-errors"><span>Только ошибки</span></label>
+        <select id="log-show" aria-label="Что показывать в журнале"><option value="all">Все строки</option><option value="problems">Ошибки и предупреждения</option><option value="people">Игроки и чат</option><option value="quiet">Без служебных строк</option></select>
+        <label class="check"><input type="checkbox" id="log-color" checked><span>Подсветка</span></label>
         <div class="quick" id="quick" aria-label="Быстрые команды">
           <button type="button" class="btn small" data-quick="time set day">День</button>
           <button type="button" class="btn small" data-quick="weather clear">Ясно</button>
@@ -248,6 +258,55 @@
         <input type="text" id="chat-text" placeholder="Сообщение игрокам" autocomplete="off" maxlength="240" disabled>
         <button type="submit" id="chat-send" class="btn primary" disabled>Отправить</button>
       </form>
+    </section>
+
+    <section id="view-map" class="view" role="tabpanel" aria-labelledby="tab-map" hidden>
+      <div class="map-bar">
+        <div class="seg" role="radiogroup" aria-label="Мир">
+          <button type="button" class="seg-btn" role="radio" data-mapdim="overworld">Обычный мир</button>
+          <button type="button" class="seg-btn" role="radio" data-mapdim="end">Энд</button>
+        </div>
+        <label class="check"><input type="checkbox" id="map-select"><span>Выделить для отката</span></label>
+        <select id="map-backup" aria-label="Копия для сравнения и отката"></select>
+        <button type="button" id="map-changes" class="btn small">Показать изменения с копии</button>
+        <button type="button" id="map-refresh" class="btn small">Обновить</button>
+      </div>
+      <div class="map-wrap" id="map-wrap">
+        <canvas id="map" class="map-canvas" role="img" aria-label="Карта мира сверху"></canvas>
+        <div class="map-coords" id="map-coords"></div>
+        <div class="map-sel" id="map-sel" hidden>
+          <span id="map-sel-text"></span>
+          <button type="button" id="map-restore" class="btn small primary">Вернуть из копии</button>
+          <button type="button" id="map-clear" class="btn small">Снять выделение</button>
+        </div>
+      </div>
+      <p class="hint" id="wm-hint"></p>
+    </section>
+
+    <section id="view-dp" class="view" role="tabpanel" aria-labelledby="tab-dp" hidden>
+      <div class="scroll-col">
+        <section class="card">
+          <div class="row-between">
+            <h2>Установленные датапаки</h2>
+            <div class="row">
+              <button type="button" id="dp-add" class="btn small">Добавить файл .zip</button>
+              <button type="button" id="dp-add-folder" class="btn small">Добавить папку</button>
+              <button type="button" id="dp-open" class="btn small">Открыть папку</button>
+            </div>
+          </div>
+          <div id="dp-list" class="list"></div>
+          <p class="hint" id="dp-hint"></p>
+        </section>
+        <section class="card">
+          <h2>Найти на Modrinth</h2>
+          <form id="dp-search-form" class="cmd">
+            <input type="search" id="dp-q" placeholder="Название датапака, например: Terralith" autocomplete="off">
+            <button type="submit" class="btn">Найти</button>
+          </form>
+          <div id="dp-results" class="list"></div>
+          <button type="button" id="dp-more" class="btn more" hidden>Показать ещё</button>
+        </section>
+      </div>
     </section>
 
     <section id="view-mods" class="view" role="tabpanel" aria-labelledby="tab-mods" hidden>
@@ -381,6 +440,67 @@
     <section id="view-players" class="view" role="tabpanel" aria-labelledby="tab-players" hidden>
       <div class="scroll-col">
         <p class="hint" id="pl-hint"></p>
+        <section class="card pc-card" id="pc-card" hidden>
+          <div class="row-between">
+            <div class="pc-head">
+              <img id="pc-face" class="pc-face" alt="">
+              <div><h2 id="pc-name"></h2><p class="hint" id="pc-sub"></p></div>
+            </div>
+            <button type="button" id="pc-close" class="btn small">Закрыть</button>
+          </div>
+          <div class="pc-facts" id="pc-facts"></div>
+          <div>
+            <span class="sub-label" id="pc-inv-title">Инвентарь</span>
+            <div id="pc-inv" class="pc-inv"></div>
+          </div>
+          <div id="pc-actions" class="pc-actions">
+            <div class="row">
+              <select id="pc-mode" aria-label="Режим игры">
+                <option value="">Сменить режим…</option>
+                <option value="survival">Выживание</option>
+                <option value="creative">Творческий</option>
+                <option value="adventure">Приключение</option>
+                <option value="spectator">Наблюдатель</option>
+              </select>
+              <button type="button" id="pc-kick" class="btn">Кикнуть</button>
+            </div>
+            <form class="cmd" id="pc-give-form">
+              <input type="text" id="pc-item" placeholder="Предмет, например diamond" list="pc-items" autocomplete="off" spellcheck="false">
+              <input type="number" id="pc-count" value="1" min="1" max="2304" aria-label="Количество">
+              <button type="submit" class="btn">Выдать</button>
+            </form>
+            <form class="cmd" id="pc-tp-form">
+              <input type="text" id="pc-tp" placeholder="Ник другого игрока или координаты x y z" autocomplete="off">
+              <button type="submit" class="btn">Телепортировать</button>
+            </form>
+          </div>
+          <p class="hint" id="pc-hint"></p>
+          <datalist id="pc-items"><option value="diamond"></option><option value="iron_ingot"></option><option value="gold_ingot"></option><option value="emerald"></option><option value="netherite_ingot"></option><option value="cooked_beef"></option><option value="bread"></option><option value="golden_apple"></option><option value="torch"></option><option value="oak_log"></option><option value="cobblestone"></option><option value="diamond_pickaxe"></option><option value="diamond_sword"></option><option value="bow"></option><option value="arrow"></option><option value="shield"></option><option value="elytra"></option><option value="firework_rocket"></option><option value="ender_pearl"></option><option value="experience_bottle"></option><option value="totem_of_undying"></option><option value="shulker_box"></option><option value="bed"></option></datalist>
+        </section>
+        <section class="card" id="ev-card">
+          <h2>Игровые события</h2>
+          <p class="hint">Устроить праздник одной кнопкой. Сервер сам объявит событие в чате и вернёт всё как было, когда оно закончится.</p>
+          <div class="ev-grid">
+            <button type="button" class="btn" data-event="fireworks">Салют над всеми</button>
+            <button type="button" class="btn" data-event="xp">Подарок опыта</button>
+            <button type="button" class="btn" data-event="peace">Мирный час</button>
+            <button type="button" class="btn" data-event="day">Вечный день на час</button>
+          </div>
+          <form class="cmd" id="ev-gift-form">
+            <input type="text" id="ev-gift" placeholder="Подарок всем: предмет, например cake" list="pc-items" autocomplete="off" spellcheck="false">
+            <button type="submit" class="btn">Подарить</button>
+          </form>
+          <div id="ev-active" class="ev-active"></div>
+          <p class="hint" id="ev-hint"></p>
+        </section>
+        <section class="card" id="ach-card">
+          <div class="row-between">
+            <h2>Достижения сервера</h2>
+            <label class="check"><input type="checkbox" id="ach-on"><span>Объявлять</span></label>
+          </div>
+          <p class="hint">Кто первым убил дракона, нашёл алмазы, попал в Энд, и рубежи времени в игре (1, 10, 50, 100… часов). Объявляется в чате, а ещё в Telegram и Discord, если они подключены.</p>
+          <div id="ach-list" class="ach-list"></div>
+        </section>
         <section class="card">
           <h2 id="pl-online-title">Сейчас на сервере</h2>
           <div id="pl-online" class="chips"></div>
@@ -497,6 +617,53 @@
           </div>
           <label class="check"><input type="checkbox" id="rs-crash"><span>Перезапускать сервер, если он упал во время игры (не больше 3 раз за полчаса)</span></label>
           <p class="hint" id="mt-hint"></p>
+        </section>
+        <section class="card" id="lag-card">
+          <div class="row-between">
+            <h2>Почему тормозит</h2>
+            <button type="button" id="lag-run" class="btn small">Найти причину</button>
+          </div>
+          <ul id="lag-list" class="lag-list"></ul>
+          <p class="hint" id="lag-hint">Лаунчер посчитает существ и предметы около каждого игрока и подскажет, что нагружает сервер. Если сервер тормозит дольше полуминуты, лаунчер проверит это сам.</p>
+        </section>
+        <section class="card" id="mcn-card" hidden>
+          <div class="row-between">
+            <h2 id="mcn-title">Вышла новая версия Minecraft</h2>
+            <button type="button" id="mcn-go" class="btn small">Как перейти</button>
+          </div>
+          <p id="mcn-text" class="mcn-text"></p>
+          <p class="hint" id="mcn-hint"></p>
+        </section>
+        <section class="card" id="bv-card">
+          <div class="row-between">
+            <h2>Проверка копий</h2>
+            <button type="button" id="bv-verify" class="btn small">Проверить последнюю</button>
+          </div>
+          <p class="hint" id="bv-hint">Раз в неделю лаунчер сам проверяет, что последнюю копию мира можно прочитать и восстановить.</p>
+        </section>
+        <section class="card" id="rg-card">
+          <h2>Что изменилось с копии · откат части мира</h2>
+          <p class="hint">Сравните мир с копией — лаунчер покажет области 512 × 512 блоков, где что-то менялось. Отмеченные области можно вернуть из копии, не трогая остальной мир. Сервер для этого нужно остановить; текущий мир перед откатом сохранится копией.</p>
+          <div class="row">
+            <select id="rg-file" aria-label="Копия мира"></select>
+            <button type="button" id="rg-compare" class="btn">Сравнить с текущим миром</button>
+          </div>
+          <div id="rg-list" class="rg-list"></div>
+          <div class="row" id="rg-actions" hidden>
+            <button type="button" id="rg-restore" class="btn primary">Вернуть отмеченные из копии</button>
+          </div>
+          <details class="rg-manual">
+            <summary>Вернуть область по координатам</summary>
+            <div class="row rg-coords">
+              <label class="field"><span>Мир</span><select id="rg-dim"><option value="overworld">Обычный</option><option value="nether">Нижний</option><option value="end">Энд</option></select></label>
+              <label class="field"><span>X</span><input type="number" id="rg-x" value="0"></label>
+              <label class="field"><span>Z</span><input type="number" id="rg-z" value="0"></label>
+              <label class="field"><span>Радиус, блоков</span><input type="number" id="rg-r" value="50" min="0" max="2000"></label>
+              <button type="button" id="rg-restore-xz" class="btn rg-go">Вернуть</button>
+            </div>
+            <p class="hint">Координаты видны в игре по F3 или в карточке игрока на вкладке «Игроки». Возвращаются целые области 512 × 512, которые задевает этот квадрат.</p>
+          </details>
+          <p class="hint" id="rg-hint"></p>
         </section>
         <section class="card" id="ua-card">
           <div class="row-between">
@@ -685,6 +852,40 @@
             <div class="row"><button type="button" id="nw-go" class="btn primary">Начать новый мир</button></div>
             <p class="hint" id="nw-hint"></p>
           </div>
+        </section>
+
+        <section class="card" id="iv-card">
+          <h2>Открытка-приглашение</h2>
+          <p class="hint">Картинка с названием, адресом и версией сервера — отправьте её друзьям в мессенджер.</p>
+          <div class="iv-wrap">
+            <canvas id="iv-canvas" class="iv-canvas" width="960" height="540" role="img" aria-label="Открытка-приглашение"></canvas>
+            <div class="iv-form">
+              <label class="field"><span>Название</span><input type="text" id="iv-title" maxlength="40"></label>
+              <label class="field"><span>Адрес для входа</span><input type="text" id="iv-addr" maxlength="80" placeholder="например, name.joinmc.link"></label>
+              <label class="field"><span>Подпись</span><input type="text" id="iv-note" maxlength="80" placeholder="Заходи вечером!"></label>
+              <div class="row">
+                <button type="button" id="iv-copy" class="btn primary">Скопировать</button>
+                <button type="button" id="iv-save" class="btn">Сохранить</button>
+              </div>
+              <p class="hint" id="iv-hint"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" id="wb-card">
+          <h2>Граница мира</h2>
+          <p class="hint">Мир станет квадратом заданного размера: дальше игроки не пройдут. Маленький прогруженный мир — меньше лагов и места на диске. Работает, когда сервер запущен.</p>
+          <div class="row wb-row">
+            <label class="field"><span>Размер, блоков</span><input type="number" id="wb-size" value="5000" min="50" step="100"></label>
+            <label class="field"><span>Центр X</span><input type="number" id="wb-x" value="0"></label>
+            <label class="field"><span>Центр Z</span><input type="number" id="wb-z" value="0"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="wb-pregen" checked><span>Сразу прогрузить весь мир внутри границы (через Chunky)</span></label>
+          <div class="row">
+            <button type="button" id="wb-apply" class="btn">Поставить границу</button>
+            <button type="button" id="wb-remove" class="btn">Убрать границу</button>
+          </div>
+          <p class="hint" id="wb-hint"></p>
         </section>
 
         <section class="card" id="ck-card">
@@ -1048,6 +1249,8 @@
   <script src="js/97-tools.js"></script>
   <script src="js/98-multi.js"></script>
   <script src="js/98-life.js"></script>
+  <script src="js/98-tools2.js"></script>
+  <script src="js/98-tools3.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'">
+  <title>Блокхост — мини-окно</title>
+  <link rel="stylesheet" href="widget.css">
+</head>
+<body>
+  <header class="w-head">
+    <img class="w-logo" src="../build/icon.png" alt="">
+    <b id="w-title" class="w-title">Блокхост</b>
+    <span id="w-state" class="w-state" data-state="stopped">Выключен</span>
+    <button type="button" id="w-close" class="w-x" title="Закрыть мини-окно" aria-label="Закрыть">×</button>
+  </header>
+  <div class="w-stats">
+    <div><span>Игроки</span><b id="w-players">—</b></div>
+    <div><span>Плавность</span><b id="w-tps">—</b></div>
+    <div><span>Память</span><b id="w-mem">—</b></div>
+  </div>
+  <div class="w-actions">
+    <button type="button" id="w-start" class="w-btn primary">Запустить</button>
+    <button type="button" id="w-stop" class="w-btn">Остановить</button>
+    <button type="button" id="w-main" class="w-btn">Лаунчер</button>
+  </div>
+  <script src="widget.js"></script>
+</body>
+</html>
