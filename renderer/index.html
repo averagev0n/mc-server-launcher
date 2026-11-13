@@ -97,8 +97,16 @@
           </div>
         </div>
         <p class="hint" id="type-hint"></p>
+        <div class="mp" id="mp" hidden>
+          <form class="cmd" id="mp-form">
+            <input type="search" id="mp-q" placeholder="Название сборки, например: Create или Fabulously Optimized" autocomplete="off">
+            <button type="submit" class="btn primary">Найти</button>
+          </form>
+          <div id="mp-list" class="mp-list"></div>
+          <p class="hint" id="mp-hint"></p>
+        </div>
         <div class="wz-foot">
-          <span class="hint-line">Есть сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button> · Уже есть сервер? <button type="button" id="import-server" class="link-btn">Добавить его папку</button></span>
+          <span class="hint-line">Есть сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button> или <button type="button" id="mp-open" class="link-btn">найти сборку на Modrinth</button> · Уже есть сервер? <button type="button" id="import-server" class="link-btn">Добавить его папку</button></span>
           <button type="button" class="btn big ghost" data-wz="cancel">Отмена</button>
           <button type="button" class="btn big primary" data-wz="next">Дальше</button>
         </div>
@@ -222,6 +230,7 @@
         </div>
       </div>
       <div id="log" class="log" role="log" aria-live="off"></div>
+      <div id="bg-log" class="log" role="log" aria-live="off" hidden></div>
       <form id="cmd-form" class="cmd">
         <input type="text" id="cmd" placeholder="Команда серверу, например: op Ник (↑ — прошлые команды)" autocomplete="off" list="cmd-list" disabled>
         <datalist id="cmd-list"></datalist>
@@ -400,6 +409,36 @@
       <div class="scroll-col">
         <section class="card">
           <div class="row-between">
+            <h2>Здоровье сервера</h2>
+            <button type="button" id="health-refresh" class="btn small">Проверить</button>
+          </div>
+          <ul id="health" class="health"></ul>
+        </section>
+        <section class="card">
+          <h2>Место на диске</h2>
+          <div class="disk" id="disk"></div>
+          <p class="hint" id="disk-hint"></p>
+        </section>
+        <section class="card">
+          <div class="row-between">
+            <h2>Журналы и отчёты о сбоях</h2>
+            <button type="button" id="lg-clean" class="btn small">Удалить старые</button>
+          </div>
+          <label class="check"><input type="checkbox" id="cl-on"><span>Удалять журналы и отчёты старше</span>
+            <select id="cl-days" class="inline-select" aria-label="Сколько дней хранить">
+              <option value="3">3 дней</option><option value="7">7 дней</option><option value="14">14 дней</option><option value="30">30 дней</option><option value="90">90 дней</option>
+            </select><span>при каждом запуске</span></label>
+          <div class="logs">
+            <div id="lg-list" class="lg-list"></div>
+            <div class="lg-view">
+              <div id="lg-issues" class="issues-list"></div>
+              <pre id="lg-text" class="log lg-text">Выберите журнал слева.</pre>
+            </div>
+          </div>
+          <p class="hint" id="lg-hint"></p>
+        </section>
+        <section class="card">
+          <div class="row-between">
             <h2>Резервные копии мира</h2>
             <div class="row">
               <button type="button" id="bk-folder" class="btn small">Открыть папку</button>
@@ -563,6 +602,17 @@
             </div>
             <p class="hint" id="up-hint"></p>
           </div>
+          <div class="icon-row">
+            <img id="ic-img" class="srv-icon" alt="" hidden>
+            <div class="srv-icon empty" id="ic-empty">64×64</div>
+            <div class="stack">
+              <span class="sub-label">Значок в списке серверов у игроков</span>
+              <div class="row">
+                <button type="button" id="ic-pick" class="btn small">Выбрать картинку…</button>
+                <button type="button" id="ic-remove" class="btn small" hidden>Убрать</button>
+              </div>
+            </div>
+          </div>
           <p class="hint" id="build-hint"></p>
           <p class="hint" id="srv-hint"></p>
         </section>
@@ -576,11 +626,49 @@
             <button type="button" id="wi-go" class="btn">Заменить мир</button>
           </div>
           <p class="hint" id="wi-hint"></p>
+          <div class="row">
+            <button type="button" id="nw-open" class="btn">Начать новый мир…</button>
+          </div>
+          <div id="nw-box" class="stack sub-box" hidden>
+            <p class="hint">Текущий мир сохранится копией (её можно вернуть во вкладке «Обслуживание»), а при следующем запуске создастся новый.</p>
+            <div class="grid">
+              <label class="field"><span>Тип мира</span>
+                <select id="nw-level">
+                  <option value="normal">Обычный</option>
+                  <option value="large_biomes">Большие биомы</option>
+                  <option value="amplified">Расширенный (высокие горы)</option>
+                  <option value="flat">Плоский</option>
+                </select>
+              </label>
+              <label class="field"><span>Сид (необязательно)</span><input type="text" id="nw-seed" maxlength="64" placeholder="Случайный" autocomplete="off"></label>
+            </div>
+            <div class="row"><button type="button" id="nw-go" class="btn primary">Начать новый мир</button></div>
+            <p class="hint" id="nw-hint"></p>
+          </div>
+        </section>
+
+        <section class="card" id="ck-card">
+          <h2>Прогрузить мир заранее</h2>
+          <p class="hint">Сервер заранее создаст местность вокруг спавна — игроки не будут ловить лаги, исследуя мир. Работает через Chunky; пока идёт прогрузка, серверу тяжелее.</p>
+          <div class="row">
+            <select id="ck-radius" aria-label="Радиус">
+              <option value="1000">Радиус 1000 блоков (быстро)</option>
+              <option value="2500" selected>Радиус 2500 блоков</option>
+              <option value="5000">Радиус 5000 блоков (долго)</option>
+              <option value="10000">Радиус 10 000 блоков (очень долго)</option>
+            </select>
+            <button type="button" id="ck-install" class="btn" hidden>Установить Chunky</button>
+            <button type="button" id="ck-go" class="btn primary">Начать</button>
+            <button type="button" id="ck-cancel" class="btn" hidden>Остановить</button>
+          </div>
+          <div class="progress" id="ck-progress" hidden><div id="ck-bar"></div></div>
+          <p class="hint" id="ck-hint"></p>
         </section>
 
         <section class="card">
           <h2>Запуск</h2>
           <div id="home-launch"></div>
+          <label class="check"><input type="checkbox" id="jvm-aikar"><span>Оптимальные параметры Java (флаги Aikar) — меньше подвисаний, особенно на модах</span></label>
         </section>
 
         <section class="card">
@@ -620,8 +708,32 @@
           </div>
           <label class="field">
             <span>Описание в списке серверов</span>
-            <input type="text" id="p-motd" maxlength="120">
+            <input type="text" id="p-motd" maxlength="160">
           </label>
+          <div class="motd-tools" id="motd-tools" aria-label="Цвет и стиль описания">
+            <button type="button" class="motd-c" data-code="&4" title="Тёмно-красный"></button>
+            <button type="button" class="motd-c" data-code="&c" title="Красный"></button>
+            <button type="button" class="motd-c" data-code="&6" title="Золотой"></button>
+            <button type="button" class="motd-c" data-code="&e" title="Жёлтый"></button>
+            <button type="button" class="motd-c" data-code="&2" title="Зелёный"></button>
+            <button type="button" class="motd-c" data-code="&a" title="Светло-зелёный"></button>
+            <button type="button" class="motd-c" data-code="&b" title="Голубой"></button>
+            <button type="button" class="motd-c" data-code="&3" title="Бирюзовый"></button>
+            <button type="button" class="motd-c" data-code="&9" title="Синий"></button>
+            <button type="button" class="motd-c" data-code="&d" title="Розовый"></button>
+            <button type="button" class="motd-c" data-code="&5" title="Фиолетовый"></button>
+            <button type="button" class="motd-c" data-code="&f" title="Белый"></button>
+            <button type="button" class="motd-c" data-code="&7" title="Серый"></button>
+            <button type="button" class="motd-s" data-code="&l" title="Жирный"><b>Ж</b></button>
+            <button type="button" class="motd-s" data-code="&o" title="Курсив"><i>К</i></button>
+            <button type="button" class="motd-s" data-code="&n" title="Подчёркнутый"><u>Ч</u></button>
+            <button type="button" class="motd-s" data-code="&r" title="Сбросить стиль">↺</button>
+            <button type="button" class="motd-s" data-code="\n" title="Вторая строка">↵</button>
+          </div>
+          <div class="motd-preview" aria-label="Как увидят игроки">
+            <div class="motd-icon" id="motd-icon"></div>
+            <div><b id="motd-name">Minecraft Server</b><div id="motd-preview" class="motd-text"></div></div>
+          </div>
           <label class="check">
             <input type="checkbox" id="p-online">
             <span>Пускать только лицензионные аккаунты</span>
@@ -630,6 +742,27 @@
             <button type="button" id="save" class="btn primary">Сохранить</button>
           </div>
           <p class="hint" id="props-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Набор ресурсов сервера</h2>
+          <p class="hint">Текстуры и звуки, которые игрокам предложат скачать при входе. Нужна прямая ссылка на .zip (например, с Modrinth или Dropbox с ?dl=1) — контрольную сумму лаунчер посчитает сам.</p>
+          <label class="field"><span>Ссылка на .zip</span><input type="text" id="rp-url" placeholder="https://…/pack.zip" autocomplete="off" spellcheck="false"></label>
+          <label class="check"><input type="checkbox" id="rp-require"><span>Обязательно: без набора на сервер не пустит</span></label>
+          <div class="row"><button type="button" id="rp-save" class="btn">Сохранить</button></div>
+          <p class="hint" id="rp-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Сообщения игрокам</h2>
+          <label class="field"><span>Приветствие при входе (%player% — ник)</span><input type="text" id="msg-welcome" maxlength="200" placeholder="Например: Привет, %player%! Правила — /rules"></label>
+          <span class="sub-label">По расписанию — пишутся в чат всем</span>
+          <div id="msg-list" class="msg-list"></div>
+          <div class="row">
+            <button type="button" id="msg-add" class="btn small">+ Сообщение</button>
+            <button type="button" id="msg-save" class="btn small primary">Сохранить</button>
+          </div>
+          <p class="hint" id="msg-hint"></p>
         </section>
 
         <section class="card">
@@ -712,6 +845,46 @@
             <label class="check"><input type="checkbox" id="pf-crash"><span>Сервер упал</span></label>
           </div>
         </section>
+
+        <section class="card">
+          <h2>Сеть серверов</h2>
+          <p class="hint">Несколько серверов Paper под одним адресом: игроки заходят в первый (например, лобби) и переходят между серверами командой /server &lt;имя&gt;. Работает через прокси Velocity, лаунчер всё настроит сам. Каждый сервер нужно один раз запустить отдельно, чтобы он установился.</p>
+          <div id="nw2-list" class="checks col"></div>
+          <div class="grid">
+            <label class="field"><span>Порт для игроков</span><input type="number" id="nw2-port" min="1" max="65535" value="25565"></label>
+            <label class="check nw2-online"><input type="checkbox" id="nw2-online" checked><span>Только лицензионные аккаунты</span></label>
+          </div>
+          <div class="row">
+            <button type="button" id="nw2-setup" class="btn">Настроить сеть</button>
+            <button type="button" id="nw2-start" class="btn primary" hidden>Запустить сеть</button>
+            <button type="button" id="nw2-stop" class="btn" hidden>Остановить сеть</button>
+            <button type="button" id="nw2-remove" class="btn danger" hidden>Убрать сеть</button>
+          </div>
+          <p class="hint" id="nw2-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Управление с телефона</h2>
+          <p class="hint">Откройте адрес в браузере телефона, подключённого к тому же Wi-Fi, и введите код. Можно запускать и останавливать сервер, смотреть, кто играет, и отправлять команды.</p>
+          <label class="check"><input type="checkbox" id="rm-on"><span>Включить</span></label>
+          <div id="rm-box" class="rm-box" hidden>
+            <div><span class="sub-label">Адрес</span><b id="rm-url" class="mono"></b></div>
+            <div><span class="sub-label">Код</span><b id="rm-code" class="mono big-code"></b></div>
+            <button type="button" id="rm-new" class="btn small">Новый код</button>
+          </div>
+          <p class="hint" id="rm-hint"></p>
+        </section>
+
+        <section class="card">
+          <h2>Перенос на другой компьютер</h2>
+          <p class="hint">Все серверы с мирами, модами и настройками — в один архив. На новом компьютере установите лаунчер и нажмите «Восстановить из архива». Файлы самих серверов скачаются заново.</p>
+          <label class="check"><input type="checkbox" id="tr-backups"><span>Взять и резервные копии мира (архив будет больше)</span></label>
+          <div class="row">
+            <button type="button" id="tr-export" class="btn">Сохранить архив…</button>
+            <button type="button" id="tr-import" class="btn">Восстановить из архива…</button>
+          </div>
+          <p class="hint" id="tr-hint"></p>
+        </section>
       </div>
     </section>
     </section>
@@ -780,6 +953,8 @@
   <script src="js/90-shell.js"></script>
   <script src="js/95-extras.js"></script>
   <script src="js/96-more.js"></script>
+  <script src="js/97-tools.js"></script>
+  <script src="js/98-multi.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

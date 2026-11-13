@@ -20,6 +20,14 @@ const { createDiscord, escapeMd } = require('./lib/discord');
 const gamerules = require('./lib/gamerules');
 const tps = require('./lib/tps');
 const playtime = require('./lib/playtime');
+const modcheck = require('./lib/modcheck');
+const logsLib = require('./lib/logs');
+const disk = require('./lib/disk');
+const jvm = require('./lib/jvm');
+const { createRemote } = require('./lib/remote');
+const tar = require('tar');
+const { createRunner, freePort } = require('./lib/runner');
+const velocity = require('./lib/velocity');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
@@ -120,6 +128,7 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   if (state !== 'stopped') throw new Error('Сервер уже запущен или запускается');
   core.checkArgs(type, version, loader || undefined);
   const dir = serverDir(type, version);
+  if (runner.has(bgKey(type, version))) throw new Error('Этот сервер уже работает в фоне');
   const { maxGb, totalGb } = memoryInfo();
   const asked = Math.round(Number(ramGb)) || 2;
   if (asked > maxGb) {
@@ -184,6 +193,7 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   tracker = playtime.createTracker(dir);
   lastTps = null;
   tpsFails = 0;
+  if (runner.list().length) ensureFreePort(type, version, dir);
   resetIssues(dir, {
     type,
     version,
@@ -193,12 +203,19 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
     javaMajor: java.major,
     modded: isModded(type),
   });
+  const runSettings = backup.readSettings(dir);
+  if (runSettings.clean.enabled) {
+    const c = logsLib.clean(dir, runSettings.clean.days);
+    if (c.files) log(`Автоочистка: удалено старых журналов и отчётов — ${c.files} (${fmtSize(c.bytes)}).`);
+  }
+  const aikar = runSettings.jvm.aikar && java.bits !== 32 && ram >= 2;
   setState('starting');
   const what = `${type} ${version}${inst.loader && isModded(type) ? ' (загрузчик ' + inst.loader + ')' : ''}`;
   log(`Запускаю ${what}, память ${ram} ГБ, ${java.text}…`);
   const args = [
     `-Xms${Math.min(ram, 1)}G`,
     `-Xmx${java.bits === 32 ? 1 : ram}G`,
+    ...(aikar ? jvm.aikarFlags(ram) : []),
     '-Djava.net.useSystemProxies=true',
     '-Dfile.encoding=UTF-8',
     '-Dstdout.encoding=UTF-8',
@@ -355,6 +372,7 @@ function waitForLog(re, ms) {
 }
 
 function addLogLine(line) {
+  if (/chunky/i.test(line)) chunkyLine(line);
   const ev = players.parseLine(line);
   if (ev) {
     if (ev.join && !online.has(ev.join)) onPlayer(ev.join, true);
@@ -580,8 +598,12 @@ handle('mrpack:open', async () => {
     properties: ['openFile'],
   });
   if (r.canceled || !r.filePaths[0]) return null;
+  return openPack(r.filePaths[0]);
+});
+
+async function openPack(file) {
   mrpack.cleanup(pendingPack);
-  pendingPack = await mrpack.read(r.filePaths[0]);
+  pendingPack = await mrpack.read(file);
   const p = pendingPack;
   const dir = serverDir(p.type, p.mc);
   const hasMods = fs.existsSync(path.join(dir, 'mods')) && fs.readdirSync(path.join(dir, 'mods')).length > 0;
@@ -590,7 +612,7 @@ handle('mrpack:open', async () => {
     mods: p.files.length, skipped: p.skipped.length, bad: p.bad.length, checked: p.checked,
     exists: !!core.readInstall(dir) || hasMods, hasMods,
   };
-});
+}
 handle('mrpack:cancel', () => {
   mrpack.cleanup(pendingPack);
   pendingPack = null;
@@ -719,6 +741,8 @@ function onState(next) {
   if (tray) trayMenu();
   if (next === 'running' && current) {
     runningSince = Date.now();
+    msgSent.clear();
+    chunky = null;
     const { type, version } = current;
     const title = serverTitle(type, version);
     const s = currentSettings();
@@ -737,7 +761,10 @@ function onState(next) {
 function onPlayer(name, joined) {
   if (!current) return;
   if (tracker) {
-    if (joined) tracker.join(name);
+    if (joined) {
+      tracker.join(name);
+      welcome(name);
+    }
     else tracker.leave(name);
   }
   if (tray) setTimeout(trayMenu, 0);
@@ -1177,6 +1204,526 @@ handle('tunnel:setup', async () => {
 handle('tunnel:stop', () => stopPlayit());
 handle('tunnel:set', ({ type, version, address, auto }) => backup.writeSettings(serverDir(type, version), { tunnel: { address, auto } }).tunnel);
 
+// ---- проверка модов перед запуском ----
+
+handle('mods:check', ({ type, version }) => modcheck.checkMods(type, serverDir(type, version)));
+handle('mods:checkRemove', async ({ type, version, file }) => {
+  needStopped(type, version, 'убирать моды');
+  if (!/^[^\\/:*?"<>|]+\.jar$/i.test(String(file))) throw new Error('Некорректное имя файла');
+  const p = path.join(serverDir(type, version), 'mods', String(file));
+  if (!fs.existsSync(p)) return;
+  await shell.trashItem(p);
+  mods.forgetFile(type, serverDir(type, version), String(file), 'mod');
+});
+
+// ---- старые журналы и отчёты о сбоях ----
+
+handle('logs:list', ({ type, version }) => logsLib.list(serverDir(type, version)));
+handle('logs:read', ({ type, version, kind, name }) => {
+  const dir = serverDir(type, version);
+  const text = logsLib.read(dir, kind, name);
+  const lines = text.split(/\r?\n/);
+  const seen = new Set();
+  const issues = diagnose
+    .diagnose(lines, 0, { type, version, modded: isModded(type) })
+    .filter((i) => (seen.has(i.key || i.title) ? false : seen.add(i.key || i.title)))
+    .slice(0, 8);
+  return { text: lines.slice(-4000).join('\n'), issues };
+});
+handle('logs:clean', ({ type, version, days }) => logsLib.clean(serverDir(type, version), Number(days) || 14));
+
+// ---- место на диске ----
+
+handle('disk:usage', async ({ type, version }) => {
+  const u = await disk.usage(serverDir(type, version));
+  return { ...u, level: disk.level(u) };
+});
+
+// ---- новый мир с копией старого ----
+
+handle('world:new', async ({ type, version, seed, levelType }) => {
+  needStopped(type, version, 'начать новый мир');
+  const dir = serverDir(type, version);
+  let saved = null;
+  if (backup.worldDirs(dir).length) {
+    saved = await makeBackup(dir, 'before-newworld', false);
+    for (const w of backup.worldDirs(dir)) fs.rmSync(path.join(dir, w), { recursive: true, force: true });
+  }
+  core.writeProps(dir, { 'level-seed': String(seed || ''), 'level-type': servers.levelTypeValue(version, levelType || 'normal') });
+  log('Старый мир сохранён копией. Новый мир создастся при следующем запуске сервера.');
+  return { backup: saved && saved.file };
+});
+
+// ---- прогрузка мира заранее (Chunky) ----
+
+let chunky = null; // { pct, eta, world, done }
+const CHUNKY_RE = /Task running for (\S+)\. Processed: ([\d,]+) chunks \(([\d.,]+)%\), ETA: ([\d:]+)/i;
+function chunkyLine(line) {
+  const m = line.match(CHUNKY_RE);
+  if (m) {
+    chunky = { world: m[1], chunks: Number(m[2].replace(/,/g, '')), pct: Number(m[3].replace(',', '.')), eta: m[4], done: false };
+    send('chunky', chunky);
+  } else if (/\[Chunky\].*Task (finished|stopped|cancelled) for/i.test(line)) {
+    chunky = { ...(chunky || {}), done: true, pct: /finished/i.test(line) ? 100 : (chunky || {}).pct || 0 };
+    send('chunky', chunky);
+  }
+}
+handle('chunky:start', ({ type, version, radius }) => {
+  if (!isCurrent(type, version) || state !== 'running') throw new Error('Сначала запустите сервер');
+  const r = Math.round(Number(radius));
+  if (!Number.isInteger(r) || r < 100 || r > 50000) throw new Error('Радиус — от 100 до 50 000 блоков');
+  runCmd('chunky center 0 0');
+  runCmd(`chunky radius ${r}`);
+  runCmd('chunky start');
+  chunky = { pct: 0, eta: '', world: '', done: false };
+  send('chunky', chunky);
+});
+handle('chunky:cancel', () => {
+  runCmd('chunky cancel');
+  runCmd('chunky confirm');
+});
+handle('chunky:get', () => chunky);
+
+// ---- сообщения по расписанию и приветствие ----
+
+const msgSent = new Map(); // номер сообщения → когда отправлено
+setInterval(() => {
+  if (!child || state !== 'running' || !current) return;
+  const list = backup.readSettings(serverDir(current.type, current.version)).messages.list;
+  const now = Date.now();
+  list.forEach((m, i) => {
+    const key = `${i}|${m.text}`;
+    if (!msgSent.has(key)) msgSent.set(key, now); // первое — через интервал после запуска
+    else if (now - msgSent.get(key) >= m.every * 60000) {
+      msgSent.set(key, now);
+      runCmd(`say ${m.text}`);
+    }
+  });
+}, 15000);
+function welcome(name) {
+  if (!current) return;
+  const text = backup.readSettings(serverDir(current.type, current.version)).messages.welcome;
+  if (!text) return;
+  setTimeout(() => runCmd(`tell ${name} ${text.replace(/%player%/g, name)}`), 3000);
+}
+
+// ---- набор ресурсов сервера ----
+
+handle('pack:resource', async ({ type, version, url, require: req }) => {
+  const dir = serverDir(type, version);
+  const link = String(url || '').trim();
+  if (!link) {
+    core.writeProps(dir, { 'resource-pack': '', 'resource-pack-sha1': '', 'require-resource-pack': 'false' });
+    return { sha1: '' };
+  }
+  if (!/^https?:\/\/\S+$/i.test(link)) throw new Error('Ссылка — вида https://…');
+  const res = await net.fetch(link, { headers: { 'User-Agent': core.UA } });
+  if (!res.ok) throw new Error(`Файл по ссылке не скачивается (HTTP ${res.status}). Ссылка должна вести прямо на .zip`);
+  const hash = require('crypto').createHash('sha1');
+  const reader = res.body.getReader();
+  let size = 0;
+  let head = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!head) head = Buffer.from(value.subarray(0, 4));
+    size += value.length;
+    if (size > 250 * 1024 * 1024) throw new Error('Набор ресурсов больше 250 МБ — Minecraft такой не примет');
+    hash.update(value);
+  }
+  if (!head || head.readUInt32LE(0) !== 0x04034b50) throw new Error('По ссылке не zip-архив. Нужна прямая ссылка на файл набора ресурсов');
+  const sha1 = hash.digest('hex');
+  core.writeProps(dir, { 'resource-pack': link, 'resource-pack-sha1': sha1, 'require-resource-pack': req ? 'true' : 'false' });
+  return { sha1, size };
+});
+handle('pack:resourceGet', ({ type, version }) => {
+  const text = (() => {
+    try {
+      return fs.readFileSync(path.join(serverDir(type, version), 'server.properties'), 'utf8');
+    } catch {
+      return '';
+    }
+  })();
+  const get = (k) => {
+    const m = text.match(new RegExp(`^${k}=(.*)$`, 'm'));
+    return m ? m[1].replace(/\\:/g, ':') : '';
+  };
+  return { url: get('resource-pack'), sha1: get('resource-pack-sha1'), require: get('require-resource-pack') === 'true' };
+});
+
+// ---- значок сервера ----
+
+handle('icon:get', ({ type, version }) => {
+  const p = path.join(serverDir(type, version), 'server-icon.png');
+  return fs.existsSync(p) ? 'data:image/png;base64,' + fs.readFileSync(p).toString('base64') : null;
+});
+handle('icon:pick', async ({ type, version }) => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Картинка для значка сервера',
+    filters: [{ name: 'Картинки', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'gif'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const img = nativeImage.createFromPath(r.filePaths[0]);
+  if (img.isEmpty()) throw new Error('Не удалось открыть картинку');
+  const { width, height } = img.getSize();
+  const side = Math.min(width, height);
+  const square = img.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side });
+  const png = square.resize({ width: 64, height: 64, quality: 'best' }).toPNG();
+  const dir = serverDir(type, version);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'server-icon.png'), png);
+  return 'data:image/png;base64,' + png.toString('base64');
+});
+handle('icon:remove', ({ type, version }) => fs.rmSync(path.join(serverDir(type, version), 'server-icon.png'), { force: true }));
+
+// ---- сборки модов поиском (Modrinth) ----
+
+handle('mrpack:search', async ({ query }) => {
+  const q = String(query || '').slice(0, 100);
+  const facets = encodeURIComponent(JSON.stringify([['project_type:modpack']]));
+  const j = await getJson(`https://api.modrinth.com/v2/search?limit=12&index=${q ? 'relevance' : 'downloads'}&facets=${facets}&query=${encodeURIComponent(q)}`);
+  return (j.hits || []).map((h) => ({
+    id: h.project_id,
+    title: h.title,
+    description: h.description,
+    downloads: h.downloads,
+    icon: /^https:\/\/cdn\.modrinth\.com\//.test(h.icon_url || '') ? h.icon_url : null,
+    versions: (h.versions || []).filter((v) => /^\d/.test(v)).slice(-3),
+  }));
+});
+handle('mrpack:fromModrinth', async ({ projectId }) => {
+  if (!/^[A-Za-z0-9]{1,32}$/.test(String(projectId))) throw new Error('Некорректная сборка');
+  const versions = await getJson(`https://api.modrinth.com/v2/project/${projectId}/version`);
+  const v = versions.find((x) => x.version_type === 'release') || versions[0];
+  const file = v && (v.files.find((f) => f.primary && f.filename.endsWith('.mrpack')) || v.files.find((f) => f.filename.endsWith('.mrpack')));
+  if (!file || !/^https:\/\/cdn\.modrinth\.com\//.test(file.url)) throw new Error('У этой сборки нет файла .mrpack');
+  const tmp = path.join(os.tmpdir(), `mcl-pack-${Date.now()}.mrpack`);
+  log(`Скачиваю сборку «${v.name || file.filename}»…`);
+  await core.downloadFile({ url: file.url, algo: 'sha1', hash: file.hashes && file.hashes.sha1, size: file.size }, tmp);
+  try {
+    return await openPack(tmp);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+});
+
+// ---- перенос лаунчера на другой ПК ----
+
+const SKIP_EXPORT = new Set(['libraries', 'versions', 'cache', 'logs', 'crash-reports', '.fabric', 'bundler']);
+handle('transfer:export', async ({ includeBackups }) => {
+  if (state !== 'stopped') throw new Error('Остановите сервер перед переносом');
+  const dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory() && /^[a-z]+-.+$/.test(d.name)).map((d) => d.name);
+  if (!dirs.length) throw new Error('Серверов пока нет — переносить нечего');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Сохранить архив с серверами',
+    defaultPath: path.join(app.getPath('documents'), `MC-Server-Launcher-${stamp}.tar.gz`),
+    filters: [{ name: 'Архив лаунчера', extensions: ['gz'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  const meta = path.join(ROOT, '.mcl-launcher.json');
+  const { lastStart, ...ui } = readUi();
+  fs.writeFileSync(meta, JSON.stringify({ ui, lastStart, exportedAt: Date.now() }), 'utf8');
+  log('Собираю архив со всеми серверами — это может занять несколько минут…');
+  try {
+    await tar.c(
+      {
+        gzip: { level: 5 },
+        file: r.filePath,
+        cwd: ROOT,
+        portable: true,
+        filter: (p) => {
+          const parts = p.split(/[\\/]/);
+          if (/(^|[\\/])session\.lock$/.test(p)) return false;
+          if (parts.length === 2 && (/\.jar$/i.test(parts[1]) || parts[1] === 'launcher.json')) return false;
+          if (parts.length >= 2 && SKIP_EXPORT.has(parts[1])) return false;
+          if (!includeBackups && parts[1] === 'backups') return false;
+          return true;
+        },
+      },
+      ['.mcl-launcher.json', ...dirs]
+    );
+  } finally {
+    fs.rmSync(meta, { force: true });
+  }
+  const size = fs.statSync(r.filePath).size;
+  log(`Архив готов: ${r.filePath} (${fmtSize(size)}).`);
+  return { file: r.filePath, size, servers: dirs.length };
+});
+handle('transfer:import', async () => {
+  if (state !== 'stopped') throw new Error('Остановите сервер перед восстановлением');
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Архив лаунчера с другого компьютера',
+    filters: [{ name: 'Архив лаунчера', extensions: ['gz'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const file = r.filePaths[0];
+  const tops = new Set();
+  await tar.t({ file, onentry: (e) => tops.add(String(e.path).split(/[\\/]/)[0]) });
+  if (!tops.has('.mcl-launcher.json')) throw new Error('Это не архив лаунчера');
+  const existing = new Set(fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []);
+  const skipped = [...tops].filter((t) => t !== '.mcl-launcher.json' && existing.has(t));
+  fs.mkdirSync(ROOT, { recursive: true });
+  log('Распаковываю серверы…');
+  await tar.x({
+    file,
+    cwd: ROOT,
+    strict: true,
+    filter: (p) => {
+      const parts = String(p).split(/[\\/]/);
+      if (path.isAbsolute(p) || parts.includes('..')) return false;
+      if (parts[0] === '.mcl-launcher.json') return true;
+      return /^[a-z]+-[^\\/]+$/.test(parts[0]) && !existing.has(parts[0]);
+    },
+  });
+  const meta = path.join(ROOT, '.mcl-launcher.json');
+  try {
+    const m = JSON.parse(fs.readFileSync(meta, 'utf8'));
+    const cur = readUi();
+    fs.writeFileSync(UI_FILE(), JSON.stringify({ ...cur, prefs: cur.prefs || (m.ui || {}).prefs, lastStart: cur.lastStart || m.lastStart }), 'utf8');
+  } catch {
+    /* настройки лаунчера не обязательны */
+  }
+  fs.rmSync(meta, { force: true });
+  const added = [...tops].filter((t) => t !== '.mcl-launcher.json' && !existing.has(t));
+  return { added, skipped };
+});
+
+// ---- управление с телефона ----
+
+const remote = createRemote({
+  status: () => {
+    const last = readUi().lastStart;
+    const who = current || last;
+    let canStart = false;
+    try {
+      canStart = !!last && state === 'stopped' && core.eulaAccepted(serverDir(last.type, last.version));
+    } catch {
+      canStart = false;
+    }
+    return {
+      state,
+      name: who ? serverTitle(who.type, who.version) : 'Сервер не выбран',
+      players: [...online],
+      tps: lastTps ? Math.round(lastTps.tps * 10) / 10 : null,
+      log: logLines.slice(-40),
+      canStart,
+    };
+  },
+  start: async () => {
+    const last = readUi().lastStart;
+    if (!last) throw new Error('Сначала запустите сервер из лаунчера хотя бы раз');
+    if (state !== 'stopped') throw new Error('Сервер уже работает');
+    cancelCrashRestart(true);
+    log('Запуск с телефона…');
+    await startServer({ ...last, eula: false });
+  },
+  stop: () => {
+    if (!child) throw new Error('Сервер не запущен');
+    log('Остановка с телефона…');
+    cancelCrashRestart(false);
+    restartPending = false;
+    stopServer();
+  },
+  command: (text) => {
+    if (!child || state === 'stopped') throw new Error('Сервер не запущен');
+    child.stdin.write(text + '\n');
+    send('log', { text: '> ' + text + ' (с телефона)', kind: 'input' });
+  },
+});
+const remoteUrl = (port) => {
+  const a = localAddresses().find((x) => !x.vpn) || localAddresses()[0];
+  return a ? `http://${a.address}:${port}` : `http://localhost:${port}`;
+};
+const remoteInfo = () => {
+  const i = remote.info();
+  return { ...i, url: i.enabled ? remoteUrl(i.port) : null };
+};
+handle('remote:get', () => remoteInfo());
+handle('remote:set', async ({ on }) => {
+  if (on) await remote.enable(8765);
+  else remote.disable();
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), remote: !!on }), 'utf8');
+  return remoteInfo();
+});
+handle('remote:newCode', () => {
+  remote.newCode();
+  return remoteInfo();
+});
+
+// ---- несколько серверов одновременно (фоновые) ----
+
+const runner = createRunner((ev, data) => send('bg:' + ev, data));
+const bgKey = (type, version) => `${type}-${version}`;
+
+/** Порты, занятые основным сервером и фоновыми. */
+function busyPorts(exceptKey) {
+  const used = runner.list().filter((e) => e.key !== exceptKey).map((e) => e.port).filter(Boolean);
+  if (current && state !== 'stopped') used.push(Number(core.readProps(serverDir(current.type, current.version))['server-port']) || 25565);
+  return used;
+}
+/** Если порт сервера занят другим запущенным — назначить свободный и сообщить. */
+function ensureFreePort(type, version, dir) {
+  const used = busyPorts(bgKey(type, version));
+  const port = Number(core.readProps(dir)['server-port']) || 25565;
+  if (!used.includes(port)) return port;
+  const next = freePort(used, 25566);
+  core.writeProps(dir, { 'server-port': String(next) });
+  log(`Порт ${port} уже занят другим запущенным сервером — серверу «${serverTitle(type, version)}» назначен порт ${next}.`);
+  return next;
+}
+
+async function bgStart({ type, version, ramGb, javaPath }) {
+  const key = bgKey(type, version);
+  if (runner.has(key)) throw new Error('Этот сервер уже запущен');
+  if (isCurrent(type, version) && state !== 'stopped') throw new Error('Этот сервер уже запущен');
+  const dir = serverDir(type, version);
+  const inst = core.readInstall(dir);
+  if (!inst) throw new Error('Сервер ещё не установлен. Запустите его один раз, когда другие серверы остановлены, — потом он сможет работать вместе с ними');
+  if (!core.eulaAccepted(dir)) throw new Error('Сначала запустите этот сервер обычным способом и примите лицензию Minecraft');
+  const port = ensureFreePort(type, version, dir);
+  const java = await chooseJava(type, version, javaPath);
+  const { maxGb } = memoryInfo();
+  const ram = Math.max(1, Math.min(maxGb, Math.round(Number(ramGb)) || 2));
+  const s = backup.readSettings(dir);
+  const args = [
+    `-Xms${Math.min(ram, 1)}G`,
+    `-Xmx${java.bits === 32 ? 1 : ram}G`,
+    ...(s.jvm.aikar && java.bits !== 32 && ram >= 2 ? jvm.aikarFlags(ram) : []),
+    '-Djava.net.useSystemProxies=true',
+    '-Dfile.encoding=UTF-8',
+    '-Dstdout.encoding=UTF-8',
+    '-Dstderr.encoding=UTF-8',
+    ...inst.args,
+    'nogui',
+  ];
+  runner.start({ key, title: serverTitle(type, version), cwd: dir, java: java.path, args, port });
+  return { key, port };
+}
+handle('bg:start', (opts) => bgStart(opts));
+handle('bg:stop', ({ key }) => runner.stop(String(key)));
+handle('bg:command', ({ key, text }) => runner.command(String(key), text));
+handle('bg:list', () => runner.list());
+handle('bg:lines', ({ key }) => runner.lines(String(key)));
+
+// ---- сеть серверов (Velocity) ----
+
+const NET_FILE = () => path.join(app.getPath('userData'), 'network.json');
+const VEL_DIR = () => path.join(ROOT, 'velocity-network');
+function readNet() {
+  try {
+    return JSON.parse(fs.readFileSync(NET_FILE(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+async function downloadVelocity() {
+  const jar = path.join(VEL_DIR(), 'velocity.jar');
+  if (fs.existsSync(jar)) return;
+  const meta = await getJson('https://fill.papermc.io/v3/projects/velocity');
+  const versions = Object.values(meta.versions || {}).flat().filter((v) => !/SNAPSHOT/i.test(v));
+  if (!versions.length) throw new Error('Не удалось найти Velocity');
+  // Конфиг, который пишет лаунчер, — формата Velocity 3.x; ей же хватает Java 21.
+  const pick = versions.find((v) => /^3\./.test(v)) || versions[0];
+  const builds = await getJson(`https://fill.papermc.io/v3/projects/velocity/versions/${encodeURIComponent(pick)}/builds`);
+  const b = (Array.isArray(builds) ? builds : []).find((x) => x.channel === 'STABLE') || builds[0];
+  const dl = b && b.downloads && b.downloads['server:default'];
+  if (!dl) throw new Error('Не удалось найти файл Velocity');
+  log(`Скачиваю Velocity ${pick} (сборка ${b.id})…`);
+  fs.mkdirSync(VEL_DIR(), { recursive: true });
+  await core.downloadFile({ url: dl.url, algo: 'sha256', hash: dl.checksums && dl.checksums.sha256, size: dl.size }, jar);
+}
+handle('net2:get', () => {
+  const cfg = readNet();
+  const paper = fs.existsSync(ROOT)
+    ? fs.readdirSync(ROOT).filter((n) => /^paper-.+$/.test(n)).map((n) => n.slice(6)).filter((v) => {
+        try {
+          return !!core.readInstall(serverDir('paper', v));
+        } catch {
+          return false;
+        }
+      })
+    : [];
+  return {
+    config: cfg,
+    candidates: paper.map((v) => ({ type: 'paper', version: v, title: serverTitle('paper', v) })),
+    running: runner.has('velocity'),
+  };
+});
+handle('net2:setup', async ({ servers: list, port, onlineMode }) => {
+  if (!Array.isArray(list) || list.length < 2) throw new Error('Для сети нужно хотя бы два сервера');
+  if (runner.has('velocity')) throw new Error('Сначала остановите сеть');
+  const p = Number(port) || 25565;
+  if (!(p >= 1 && p <= 65535)) throw new Error('Некорректный порт');
+  for (const s of list) {
+    if (s.type !== 'paper') throw new Error('В сеть можно объединять только серверы Paper');
+    if ((isCurrent(s.type, s.version) && state !== 'stopped') || runner.has(bgKey(s.type, s.version))) {
+      throw new Error(`Остановите сервер «${serverTitle(s.type, s.version)}», чтобы настроить сеть`);
+    }
+  }
+  await downloadVelocity();
+  const prev = readNet();
+  const secret = (prev && prev.secret) || velocity.newSecret();
+  const usedNames = new Set();
+  const usedPorts = [p];
+  const servers = list.map((s) => {
+    const port2 = freePort(usedPorts, 25566);
+    usedPorts.push(port2);
+    return { type: s.type, version: s.version, name: velocity.slugName(serverTitle(s.type, s.version), usedNames), port: port2 };
+  });
+  for (const s of servers) {
+    const dir = serverDir(s.type, s.version);
+    velocity.enablePaperForwarding(dir, secret);
+    // Сервер в сети принимает игроков только от прокси: свой порт, только этот компьютер, без проверки лицензии (её делает прокси).
+    core.writeProps(dir, { 'server-port': String(s.port), 'server-ip': '127.0.0.1', 'online-mode': 'false' });
+  }
+  fs.writeFileSync(path.join(VEL_DIR(), 'forwarding.secret'), secret, 'utf8');
+  fs.writeFileSync(path.join(VEL_DIR(), 'velocity.toml'), velocity.velocityToml({ port: p, onlineMode: onlineMode !== false, servers }), 'utf8');
+  const cfg = { servers, port: p, onlineMode: onlineMode !== false, secret };
+  fs.writeFileSync(NET_FILE(), JSON.stringify(cfg, null, 2), 'utf8');
+  log(`Сеть настроена: ${servers.map((s) => `${s.name} (порт ${s.port})`).join(', ')}. Игроки заходят по порту ${p} и переходят между серверами командой /server <имя>.`);
+  return cfg;
+});
+handle('net2:start', async ({ ramGb }) => {
+  const cfg = readNet();
+  if (!cfg) throw new Error('Сначала настройте сеть');
+  if (runner.has('velocity')) return;
+  if (busyPorts('velocity').includes(cfg.port)) throw new Error(`Порт ${cfg.port} занят запущенным сервером — остановите его`);
+  for (const s of cfg.servers) {
+    if (!runner.has(bgKey(s.type, s.version))) await bgStart({ type: s.type, version: s.version, ramGb: ramGb || 2, javaPath: 'auto' });
+  }
+  const java = await chooseJava('vanilla', '1.21.1', 'auto'); // Velocity 3.4+ нужна Java 21
+  runner.start({
+    key: 'velocity',
+    kind: 'proxy',
+    title: 'Сеть серверов (Velocity)',
+    cwd: VEL_DIR(),
+    java: java.path,
+    args: ['-Xms256M', '-Xmx512M', '-XX:+UseG1GC', '-Dfile.encoding=UTF-8', '-jar', 'velocity.jar'],
+    port: cfg.port,
+    readyRe: /Done \(/,
+  });
+  log(`Сеть запускается: адрес для игроков — порт ${cfg.port}.`);
+});
+handle('net2:stop', () => {
+  const cfg = readNet();
+  runner.stop('velocity');
+  for (const s of (cfg && cfg.servers) || []) runner.stop(bgKey(s.type, s.version));
+});
+handle('net2:remove', () => {
+  const cfg = readNet();
+  if (runner.has('velocity')) throw new Error('Сначала остановите сеть');
+  for (const s of (cfg && cfg.servers) || []) {
+    const dir = serverDir(s.type, s.version);
+    velocity.disablePaperForwarding(dir);
+    core.writeProps(dir, { 'server-ip': '', 'online-mode': 'true' });
+  }
+  fs.rmSync(NET_FILE(), { force: true });
+});
+
 // ---- оформление: светлая, тёмная или как в Windows ----
 
 const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
@@ -1608,6 +2155,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow(hidden);
     if (hidden) ensureTray();
     autoStartServer();
+    if (readUi().remote) remote.enable(8765).catch((e) => log(`Управление с телефона не включилось: ${e.message}`, 'error'));
     updater.init(send);
   });
 }
@@ -1625,6 +2173,11 @@ function whatsNewOnce() {
 // При закрытии окна сначала аккуратно останавливаем сервер, чтобы мир сохранился.
 app.on('before-quit', (e) => {
   quitRequested = true;
+  if (runner.list().length) {
+    e.preventDefault();
+    runner.stopAll().then(() => app.quit());
+    return;
+  }
   if (child) {
     e.preventDefault();
     quitting = true;
@@ -1634,6 +2187,7 @@ app.on('before-quit', (e) => {
 app.on('window-all-closed', () => app.quit());
 // Серверы на VPS продолжают работать — закрываем только SSH-соединения.
 app.on('will-quit', () => {
+  remote.disable();
   if (vpsApi) vpsApi.shutdown();
   if (playitAuto) stopPlayit();
 });

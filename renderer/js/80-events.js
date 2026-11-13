@@ -116,7 +116,7 @@ $('save').addEventListener('click', async () => {
     'max-players': $('p-players').value,
     gamemode: $('p-gamemode').value,
     difficulty: $('p-difficulty').value,
-    motd: $('p-motd').value,
+    motd: typeof motdToProps === 'function' ? motdToProps($('p-motd').value) : $('p-motd').value,
     'online-mode': $('p-online').checked ? 'true' : 'false',
   };
   try {

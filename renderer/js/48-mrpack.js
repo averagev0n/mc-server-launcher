@@ -15,6 +15,11 @@ $('from-pack').addEventListener('click', async () => {
     return;
   }
   if (!p) return;
+  await confirmAndApplyPack(p);
+});
+
+/** Показать, что в сборке, и после подтверждения поставить сервер из неё. */
+async function confirmAndApplyPack(p) {
   const lines = [
     `Сборка «${p.name}»${p.packVersion ? ' ' + p.packVersion : ''}`,
     `Minecraft ${p.mc}, ${LOADER_NAMES[p.type]} ${p.loader}`,
@@ -50,4 +55,4 @@ $('from-pack').addEventListener('click', async () => {
   btn.textContent = label;
   $('progress').hidden = true;
   render();
-});
+}

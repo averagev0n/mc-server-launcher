@@ -70,7 +70,8 @@ function renderServerList() {
   box.replaceChildren(
     ...rows.map((s) => {
       const isRunning = !!running && running.type === s.type && running.version === s.version;
-      const st = isRunning ? state : 'stopped';
+      const bgE = typeof bgList !== 'undefined' ? bgList.find((b) => b.key === `${s.type}-${s.version}`) : null;
+      const st = isRunning ? state : bgE ? bgE.state : 'stopped';
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'srv-row' + (st === 'running' ? ' on' : st !== 'stopped' ? ' busy' : '');
