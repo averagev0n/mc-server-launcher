@@ -65,6 +65,7 @@ function renderPack() {
   const none = !chosen.length;
   $('pack-mrpack').disabled = none;
   $('pack-zip').disabled = none;
+  $('pack-app').disabled = none;
   $('pack-addr-row').hidden = !$('pack-server').checked;
   $('pack-config').disabled = !packData.hasConfig;
 }
@@ -97,9 +98,9 @@ async function loadPack() {
   renderPack();
 }
 
-async function exportPack(format) {
+async function exportPack(format, openApp = false) {
   if (!packData) return;
-  setHint('pack-result', 'Собираю…');
+  setHint('pack-result', openApp ? 'Собираю и открываю в Modrinth App…' : 'Собираю…');
   try {
     const r = await api.call('pack:export', {
       ...selected(),
@@ -109,9 +110,20 @@ async function exportPack(format) {
       packVersion: $('pack-version').value.trim(),
       address: format === 'mrpack' && $('pack-server').checked ? $('pack-addr').value.trim() : '',
       includeConfig: $('pack-config').checked,
+      openApp,
     });
     if (!r) {
       setHint('pack-result', '');
+      return;
+    }
+    if (r.noApp) {
+      const el = setHint('pack-result', 'Modrinth App на этом компьютере не найден. Установите его, и кнопка поставит сборку одним нажатием. ', 'warn');
+      addLink(el, 'Скачать Modrinth App', () => api.call('pack:modrinthApp').catch(fail));
+      return;
+    }
+    if (r.opened) {
+      const el = setHint('pack-result', 'Сборка открыта в Modrinth App — подтвердите установку в его окне. Друзьям отправьте этот же файл: у них она откроется так же. ', 'good');
+      addLink(el, 'Показать файл', () => api.call('pack:reveal', { path: r.path }).catch(fail));
       return;
     }
     const el = setHint('pack-result', `Сохранено: ${r.path} (${formatSize(r.size)}). Отправьте этот файл игрокам. `, 'good');
@@ -123,6 +135,7 @@ async function exportPack(format) {
 
 $('pack-mrpack').addEventListener('click', () => exportPack('mrpack'));
 $('pack-zip').addEventListener('click', () => exportPack('zip'));
+$('pack-app').addEventListener('click', () => exportPack('mrpack', true));
 $('pack-server').addEventListener('change', renderPack);
 $('pack-addr-pick').addEventListener('change', () => {
   if ($('pack-addr-pick').value) $('pack-addr').value = $('pack-addr-pick').value;

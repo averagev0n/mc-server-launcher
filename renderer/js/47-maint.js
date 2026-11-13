@@ -33,7 +33,7 @@ function renderMaint() {
     title.className = 'item-title';
     const name = document.createElement('span');
     name.className = 'name plain';
-    name.textContent = new Date(b.date).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+    name.textContent = new Date(b.date).toLocaleString(I18N_LOCALE, { dateStyle: 'medium', timeStyle: 'short' });
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = b.label;
@@ -81,7 +81,7 @@ function ensureMaint() {
 }
 
 async function restoreBackup(b) {
-  const when = new Date(b.date).toLocaleString('ru-RU');
+  const when = new Date(b.date).toLocaleString(I18N_LOCALE);
   if (!window.confirm(`Вернуть мир к состоянию на ${when}?\n\nВсё, что было построено после этого, пропадёт из мира — но текущий мир сначала сохранится отдельной копией, так что это можно отменить.`)) return;
   mtBusy = true;
   setHint('bk-hint', 'Восстанавливаю мир…');

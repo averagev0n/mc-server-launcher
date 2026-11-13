@@ -5,6 +5,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net">
   <title>Блокхост — сервер Minecraft</title>
   <link rel="stylesheet" href="style.css">
+  <script src="i18n-en.js"></script>
+  <script src="i18n.js"></script>
 </head>
 <body>
   <aside class="side">
@@ -25,6 +27,13 @@
           <button type="button" class="seg-btn" role="radio" data-theme="light">Светлая</button>
           <button type="button" class="seg-btn" role="radio" data-theme="dark">Тёмная</button>
           <button type="button" class="seg-btn" role="radio" data-theme="system" title="Как в Windows">Авто</button>
+        </div>
+      </div>
+      <div class="theme no-tr">
+        <span class="theme-label" id="lang-label">Язык · Language</span>
+        <div class="seg seg-full" role="radiogroup" aria-labelledby="lang-label">
+          <button type="button" class="seg-btn" role="radio" data-lang="ru">Русский</button>
+          <button type="button" class="seg-btn" role="radio" data-lang="en">English</button>
         </div>
       </div>
       <footer class="side-foot">
@@ -107,7 +116,7 @@
           <p class="hint" id="mp-hint"></p>
         </div>
         <div class="wz-foot">
-          <span class="hint-line">Есть сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button> или <button type="button" id="mp-open" class="link-btn">найти сборку на Modrinth</button> · Уже есть сервер? <button type="button" id="import-server" class="link-btn">Добавить его папку</button></span>
+          <span class="hint-line">Есть сборка .mrpack? <button type="button" id="from-pack" class="link-btn">Создать сервер из неё</button> или <button type="button" id="mp-open" class="link-btn">найти сборку на Modrinth</button> · Уже есть сервер? <button type="button" id="import-server" class="link-btn">Добавить его папку</button> · Есть рецепт от друга? <button type="button" id="rc-open-wz" class="link-btn">Открыть</button></span>
           <button type="button" class="btn big ghost" data-wz="cancel">Отмена</button>
           <button type="button" class="btn big primary" data-wz="next">Дальше</button>
         </div>
@@ -381,9 +390,18 @@
               <div class="row pack-actions">
                 <button type="button" id="pack-mrpack" class="btn primary">Сохранить .mrpack</button>
                 <button type="button" id="pack-zip" class="btn">Сохранить .zip</button>
+                <button type="button" id="pack-app" class="btn">Открыть в Modrinth App</button>
               </div>
               <p class="hint"><b>.mrpack</b> — открывается в Modrinth App, Prism Launcher, ATLauncher: игра, загрузчик и моды ставятся одной кнопкой. <b>.zip</b> — для официального лаунчера: внутри папка mods и инструкция.</p>
               <p class="hint" id="pack-result"></p>
+            </section>
+
+            <section class="card" id="mm-card">
+              <h2>Друга не пускает на сервер?</h2>
+              <p class="hint">Попросите друга скопировать текст ошибки, которую он видит при входе («моды не совпадают», «missing mods» и подобное), и вставьте сюда. Лаунчер покажет, каких модов у него не хватает и какие лишние.</p>
+              <textarea id="mm-text" rows="4" spellcheck="false" placeholder="Например: Mod rejections [create, waystones]"></textarea>
+              <div class="row"><button type="button" id="mm-go" class="btn">Разобрать</button></div>
+              <div id="mm-out" class="mm-out"></div>
             </section>
           </div>
         </div>
@@ -617,6 +635,33 @@
           </div>
           <label class="check"><input type="checkbox" id="rs-crash"><span>Перезапускать сервер, если он упал во время игры (не больше 3 раз за полчаса)</span></label>
           <p class="hint" id="mt-hint"></p>
+        </section>
+        <section class="card" id="sl-card">
+          <h2>Спящий режим</h2>
+          <p class="hint">Если на сервере долго никого нет, он сохраняет мир и выключается, чтобы не занимать память и процессор. У игроков в списке серверов он виден как «спит», а попытка зайти будит его: через минуту можно заходить.</p>
+          <div class="row mt-row">
+            <label class="check"><input type="checkbox" id="sl-on"><span>Засыпать, если никого нет</span></label>
+            <select id="sl-min" aria-label="Через сколько минут засыпать">
+              <option value="5">5 минут</option>
+              <option value="10">10 минут</option>
+              <option value="15">15 минут</option>
+              <option value="30">30 минут</option>
+              <option value="60">час</option>
+            </select>
+          </div>
+          <p class="hint" id="sl-hint"></p>
+        </section>
+        <section class="card" id="bs-card" hidden>
+          <div class="row-between">
+            <h2>Сервер падает при запуске</h2>
+            <div class="row">
+              <button type="button" id="bs-run" class="btn small">Найти сломанный мод</button>
+              <button type="button" id="bs-cancel" class="btn small" hidden>Отменить</button>
+            </div>
+          </div>
+          <p class="hint">Лаунчер будет по очереди убирать половину модов и запускать сервер, пока не найдёт тот, из-за которого он падает. Обычно хватает 5–8 запусков даже на сотню модов. Запуски идут на временном мире, ваш мир не трогается, а перед началом делается копия.</p>
+          <div class="bs-bar" id="bs-bar" hidden><div id="bs-fill"></div></div>
+          <p class="hint" id="bs-hint"></p>
         </section>
         <section class="card" id="lag-card">
           <div class="row-between">
@@ -1011,6 +1056,9 @@
           <p class="hint">Чтобы друзья заходили без VPN, на роутере должен быть открыт порт сервера. Лаунчер умеет открывать его сам, если в роутере включён UPnP. Порт открыт, только пока сервер работает.</p>
           <label class="check"><input type="checkbox" id="net-upnp"><span>Открывать порт на роутере автоматически (UPnP)</span></label>
           <p class="hint" id="net-hint"></p>
+          <div class="row"><button type="button" class="btn" id="net-check-now">Проверить порт</button></div>
+          <p class="hint">Работает и без запуска сервера: лаунчер на несколько секунд сам займёт порт и проверит, доходят ли до него подключения из интернета. Пока сервер работает, лаунчер следит за внешним IP и предупредит, если он сменится.</p>
+          <p class="hint" id="net-check-result"></p>
         </section>
 
         <section class="card">
@@ -1087,11 +1135,13 @@
               <label class="check"><input type="checkbox" id="tg-start"><span>Запуск и остановка</span></label>
               <label class="check"><input type="checkbox" id="tg-players"><span>Кто зашёл и вышел</span></label>
               <label class="check"><input type="checkbox" id="tg-crash"><span>Сервер упал</span></label>
+              <label class="check"><input type="checkbox" id="tg-report"><span>Отчёт за неделю (по понедельникам)</span></label>
             </div>
             <label class="check"><input type="checkbox" id="tg-control"><span>Разрешить управление командами /on, /off и /say (только из этого чата)</span></label>
             <div class="row">
               <button type="button" id="tg-save" class="btn">Сохранить</button>
               <button type="button" id="tg-test" class="btn">Отправить проверку</button>
+              <button type="button" id="tg-report-now" class="btn">Отчёт сейчас</button>
               <button type="button" id="tg-off" class="btn">Отключить бота</button>
             </div>
           </div>
@@ -1178,6 +1228,16 @@
           </div>
           <p class="hint" id="tr-hint"></p>
         </section>
+
+        <section class="card">
+          <h2>Рецепт сервера</h2>
+          <p class="hint">Тип и версия сервера, моды или плагины и основные настройки — без мира, в маленьком файле. Отправьте его другу: он откроет файл в своём Блокхосте и получит такой же сервер. Моды скачаются с Modrinth тех же версий.</p>
+          <div class="row">
+            <button type="button" id="rc-save" class="btn">Сохранить рецепт…</button>
+            <button type="button" id="rc-open" class="btn">Открыть рецепт…</button>
+          </div>
+          <p class="hint" id="rc-hint"></p>
+        </section>
       </div>
     </section>
     </section>
@@ -1251,6 +1311,7 @@
   <script src="js/98-life.js"></script>
   <script src="js/98-tools2.js"></script>
   <script src="js/98-tools3.js"></script>
+  <script src="js/98-tools4.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

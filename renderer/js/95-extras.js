@@ -7,7 +7,7 @@ let saves = null; // миры одиночной игры (загружаютс�
 let wzWorld = 'new';
 
 const selName = () => serverTitle(type, $('version').value);
-const fmtDate = (ms) => new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDate = (ms) => new Date(ms).toLocaleDateString(I18N_LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
 
 async function loadSaves(force) {
   if (saves && !force) return saves;
@@ -171,41 +171,61 @@ $('net-upnp').addEventListener('change', async () => {
   }
 });
 
-async function checkInternet() {
-  const el = setHint('net-result', 'Проверяю, виден ли сервер из интернета (через mcsrvstat.us)…');
+// target — куда писать результат: строка под адресами (сервер работает)
+// или карточка «Доступ из интернета» (можно проверить и выключенный сервер).
+async function checkInternet(target = 'net-result') {
+  const el = setHint(target, 'Проверяю, виден ли сервер из интернета (через mcsrvstat.us)…');
   try {
     const r = await api.call('net:check', selected());
     const addr = r.publicIp + (r.port === 25565 ? '' : ':' + r.port);
+    const what = r.probe ? `Порт ${r.port}` : 'Сервер';
     el.textContent = '';
     if (r.reachable) {
       el.className = 'hint good';
-      el.textContent = `Сервер виден из интернета. Адрес для друзей: ${addr} `;
+      el.textContent = r.probe
+        ? `Порт ${r.port} открыт: из интернета до этого ПК достучаться можно. Когда сервер запустится, адрес для друзей: ${addr} `
+        : `Сервер виден из интернета. Адрес для друзей: ${addr} `;
       addLink(el, 'Скопировать', () => navigator.clipboard.writeText(addr).catch(() => {}));
     } else if (r.cgnat) {
       el.className = 'hint bad';
       el.textContent =
-        'Из интернета сервер не виден: провайдер не выдаёт вам внешний («белый») IP, порт на роутере тут не поможет. Играйте через VPN (Radmin VPN, ZeroTier) — адрес будет в строке выше — или перенесите сервер на VPS (вкладка «VPS»). Можно и попросить у провайдера белый IP.';
+        `${what} не виден из интернета: провайдер не выдаёт вам внешний («белый») IP, порт на роутере тут не поможет. Играйте через VPN (Radmin VPN, ZeroTier), туннель playit.gg или перенесите сервер на VPS (вкладка «VPS»). Можно и попросить у провайдера белый IP.`;
     } else if (!r.upnp) {
       el.className = 'hint warn';
-      el.textContent = 'Из интернета сервер не виден: порт закрыт на роутере. ';
-      addLink(el, 'Открыть порт автоматически (UPnP)', async () => {
+      el.textContent = r.upnpError
+        ? `${what} не виден из интернета: роутер не дал открыть порт (${r.upnpError}). Откройте порт ${r.port} (TCP) в настройках роутера вручную или играйте через VPN или playit.gg.`
+        : `${what} не виден из интернета: порт закрыт на роутере. `;
+      if (!r.upnpError) addLink(el, 'Открыть порт автоматически (UPnP)', async () => {
         $('net-upnp').checked = true;
-        setHint('net-result', 'Открываю порт на роутере…');
+        setHint(target, 'Открываю порт на роутере…');
         try {
           await api.call('net:upnp', { ...selected(), on: true });
-          setTimeout(checkInternet, 2000);
+          setTimeout(() => checkInternet(target), 2000);
         } catch (e) {
-          setHint('net-result', `Роутер не дал открыть порт: ${e.message}. Откройте порт ${r.port} (TCP) в настройках роутера вручную или играйте через VPN.`, 'bad');
+          setHint(target, `Роутер не дал открыть порт: ${e.message}. Откройте порт ${r.port} (TCP) в настройках роутера вручную или играйте через VPN.`, 'bad');
         }
       });
     } else {
       el.className = 'hint bad';
-      el.textContent = `Порт ${r.port} открыт на роутере, но сервер всё равно не виден. Проверьте, что брандмауэр Windows разрешает Java входящие подключения, — или играйте через VPN (Radmin VPN, ZeroTier) либо VPS.`;
+      el.textContent = r.probe
+        ? `Порт ${r.port} открыт на роутере, но до ПК подключение не доходит. Скорее всего, его не пускает брандмауэр Windows или антивирус. Разрешите входящие подключения на порт ${r.port} (TCP) — или играйте через VPN, playit.gg либо VPS.`
+        : `Порт ${r.port} открыт на роутере, но сервер всё равно не виден. Проверьте, что брандмауэр Windows разрешает Java входящие подключения, — или играйте через VPN (Radmin VPN, ZeroTier) либо VPS.`;
     }
   } catch (e) {
-    setHint('net-result', e.message, 'bad');
+    setHint(target, e.message, 'bad');
   }
 }
+$('net-check-now').addEventListener('click', async () => {
+  $('net-check-now').disabled = true;
+  await checkInternet('net-check-result');
+  $('net-check-now').disabled = false;
+});
+api.on('net', (d) => {
+  if (d && d.ipChanged) {
+    const el = setHint('net-result', `Внешний IP изменился (был ${d.ipChanged.from}). Новый адрес для друзей: ${d.ipChanged.addr} `, 'warn');
+    addLink(el, 'Скопировать', () => navigator.clipboard.writeText(d.ipChanged.addr).catch(() => {}));
+  }
+});
 api.on('net', () => {
   if (tab === 'settings') extrasKey = '';
 });

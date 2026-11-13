@@ -47,7 +47,7 @@ function lastPlayedText(ms) {
   if (days <= 0) return 'Запускался сегодня';
   if (days === 1) return 'Запускался вчера';
   if (days < 30) return `Запускался ${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
-  return 'Запускался ' + new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return 'Запускался ' + new Date(ms).toLocaleDateString(I18N_LOCALE, { day: 'numeric', month: 'long' });
 }
 
 // ---- список серверов ----

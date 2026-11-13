@@ -16,6 +16,11 @@ const diagnose = require('./lib/diagnose');
 const { createVps, HostKeyError } = require('./lib/vps');
 const servers = require('./lib/servers');
 const upnp = require('./lib/upnp');
+const probe = require('./lib/probe');
+const report = require('./lib/report');
+const bisect = require('./lib/bisect');
+const mismatch = require('./lib/mismatch');
+const recipe = require('./lib/recipe');
 const { createDiscord, escapeMd } = require('./lib/discord');
 const gamerules = require('./lib/gamerules');
 const tps = require('./lib/tps');
@@ -66,6 +71,7 @@ let modBusy = false;
 let lastStart = null; // параметры последнего запуска — для перезапуска
 let restartPending = false;
 let installUpdateAfterStop = false;
+let modTest = null; // идёт поиск сломанного мода: { dir, cancel }
 
 const serverDir = (type, version) => {
   core.checkArgs(type, version);
@@ -138,7 +144,9 @@ async function chooseJava(type, version, javaPath) {
 
 async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   if (state !== 'stopped') throw new Error('Сервер уже запущен или запускается');
+  if (modTest) throw new Error('Идёт поиск сломанного мода — дождитесь конца или отмените его');
   core.checkArgs(type, version, loader || undefined);
+  if (sleeper) await sleepCancel(sleeper.type === type && sleeper.version === version);
   const dir = serverDir(type, version);
   if (runner.has(bgKey(type, version))) throw new Error('Этот сервер уже работает в фоне');
   const { maxGb, totalGb } = memoryInfo();
@@ -161,6 +169,14 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   let inst;
   try {
     if (core.needsInstall(type, dir, loader)) {
+      // Обновление ядра или загрузчика: сначала копия мира — на случай, если новая сборка его не примет.
+      const prev = core.readInstall(dir);
+      if (prev && backup.worldDirs(dir).length) {
+        log(`Обновляю ядро сервера${prev.loader ? ` (было ${prev.loader})` : ''} — сначала делаю копию мира…`);
+        const b = await backup.create(dir, 'before-update');
+        if (b) log(`Копия сохранена: ${b.file} (${fmtSize(b.size)}).`);
+        send('backups', { dir });
+      }
       setState('downloading');
       let lastSent = 0;
       inst = await core.install({
@@ -666,7 +682,8 @@ const TYPE_SHORT = {
   youer: 'Youer', arclight: 'Arclight', mohist: 'Mohist',
 };
 const ICON = path.join(__dirname, 'build', 'icon.png');
-const discord = createDiscord((url, opts) => net.fetch(url, opts), core.UA);
+const discordRaw = createDiscord((url, opts) => net.fetch(url, opts), core.UA);
+const discord = { ...discordRaw, send: (url, text) => discordRaw.send(url, T(text)), test: (url, text) => discordRaw.test(url, T(text)) };
 let runningSince = 0;
 let upnpState = null; // { port, externalIp } — порт, открытый на роутере
 let quitRequested = false;
@@ -702,10 +719,46 @@ function showWindow() {
 }
 
 /** Уведомление Windows. always — показать, даже если такие уведомления выключены. */
+// ---- язык интерфейса: русский или английский ----
+// Тексты в коде русские; для английского перевод берётся из словаря renderer/i18n-en.js.
+let langCache = null;
+function uiLang() {
+  if (langCache) return langCache;
+  const l = readUi().lang;
+  langCache = l === 'en' || l === 'ru' ? l : /^ru|^uk|^be|^kk/i.test(app.getLocale() || '') ? 'ru' : 'en';
+  return langCache;
+}
+let trEn = null;
+/** Перевести текст для показа (в трее, уведомлениях, Telegram), если выбран английский. */
+function T(text) {
+  if (uiLang() !== 'en' || typeof text !== 'string') return text;
+  if (!trEn) trEn = require('./renderer/i18n').createTranslator(require('./renderer/i18n-en'));
+  return trEn(text);
+}
+ipcMain.on('ui:lang', (e) => {
+  e.returnValue = uiLang();
+});
+handle('ui:setLang', ({ lang }) => {
+  if (!['ru', 'en'].includes(lang)) throw new Error('Неизвестный язык');
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), lang }), 'utf8');
+  langCache = lang;
+  if (tray) trayMenu();
+  setTimeout(() => {
+    if (win && !win.isDestroyed()) win.reload();
+    if (widget && !widget.isDestroyed()) widget.reload();
+  }, 50);
+  return lang;
+});
+for (const fn of ['showSaveDialog', 'showOpenDialog']) {
+  const orig = dialog[fn].bind(dialog);
+  dialog[fn] = (w, opts = {}) => orig(w, { ...opts, title: T(opts.title), filters: (opts.filters || []).map((f) => ({ ...f, name: T(f.name) })) });
+}
+
 function notify(title, body, always = false, kind = null) {
   if (!always && kind && !prefs().notify[kind]) return;
   if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: ICON, silent: kind === 'players' });
+  const n = new Notification({ title: T(title), body: T(body), icon: ICON, silent: kind === 'players' });
   n.on('click', showWindow);
   n.show();
 }
@@ -717,15 +770,15 @@ function trayMenu() {
   const tip = busy
     ? `${serverTitle(current.type, current.version)} — ${state === 'running' ? `работает, игроков: ${online.size}` : 'запускается…'}`
     : 'Сервер не запущен';
-  tray.setToolTip(`Блокхост\n${tip}`);
+  tray.setToolTip(`${T('Блокхост')}\n${T(tip)}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Открыть лаунчер', click: showWindow },
-      { label: 'Мини-окно', click: () => openWidget() },
-      { label: tip, enabled: false },
+      { label: T('Открыть лаунчер'), click: showWindow },
+      { label: T('Мини-окно'), click: () => openWidget() },
+      { label: T(tip), enabled: false },
       { type: 'separator' },
-      { label: 'Остановить сервер', enabled: !!child && state !== 'stopping', click: () => stopServer() },
-      { label: 'Выйти', click: () => app.quit() },
+      { label: T('Остановить сервер'), enabled: !!child && state !== 'stopping', click: () => stopServer() },
+      { label: T('Выйти'), click: () => app.quit() },
     ])
   );
 }
@@ -780,6 +833,7 @@ function onState(next) {
     if (s.net.upnp) openUpnp(Number(core.readProps(serverDir(type, version))['server-port']) || 25565).catch(() => {});
     if (applyGamerules(type, version)) log('Правила игры из лаунчера применены.');
     funResume();
+    ipWatch(true);
     if (s.tunnel.auto && s.tunnel.address && fs.existsSync(PLAYIT_EXE()) && !playitProc) {
       startPlayit(false);
       playitAuto = true;
@@ -810,7 +864,9 @@ function onPlayer(name, joined) {
 }
 
 function onStopped({ dir, type, version, code, stoppedByUser }) {
-  closeUpnp();
+  const asleep = !!(sleeper && sleeper.pending && !code);
+  if (!asleep) closeUpnp();
+  ipWatch(false);
   if (tracker) tracker.closeAll();
   tracker = null;
   if (hist) hist.flush();
@@ -818,9 +874,19 @@ function onStopped({ dir, type, version, code, stoppedByUser }) {
   funStopTimers();
   joinAt.clear();
   lastTps = null;
-  if (playitAuto) stopPlayit();
+  if (playitAuto && !asleep) stopPlayit();
   const s = backup.readSettings(dir);
   const title = serverTitle(type, version);
+  if (code && !stoppedByUser) report.logCrash(dir);
+  if (sleeper && sleeper.pending) {
+    if (asleep) {
+      sleeper.pending = false;
+      sleepListen();
+      tgNotify('start', `😴 «${title}» уснул: на нём никого не было. Проснётся, когда кто-то зайдёт.`);
+      return;
+    }
+    sleeper = null;
+  }
   if (code && !stoppedByUser) {
     notify('Сервер упал', `«${title}» остановился с ошибкой. Объяснение — в лаунчере.`, false, 'crash');
     tgNotify('crash', `⚠️ Сервер «${title}» упал (код ${code}).`);
@@ -830,6 +896,80 @@ function onStopped({ dir, type, version, code, stoppedByUser }) {
     if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🔴 Сервер **${escapeMd(title)}** остановлен.`);
   }
 }
+
+// ---- спящий сервер: никого нет — выключается, кто-то заходит — просыпается ----
+// Пока сервер спит, порт слушает лаунчер (lib/probe.js): в списке серверов у игроков
+// видно «сервер спит», а попытка войти будит его. Мир перед сном сохраняется обычной остановкой.
+
+let sleeper = null; // { type, version, opts, port, probe, pending, since }
+let idleSince = 0;
+
+function sleepInfo() {
+  return sleeper && !sleeper.pending ? { type: sleeper.type, version: sleeper.version, since: sleeper.since } : null;
+}
+function sleepTick() {
+  if (state !== 'running' || !current || sleeper || modTest) return void (idleSince = 0);
+  const dir = serverDir(current.type, current.version);
+  const s = backup.readSettings(dir).sleep;
+  const busy = online.size > 0 || backupBusy || (chunky && !chunky.done) || core.readProps(dir)['server-ip'];
+  if (!s.enabled || busy) return void (idleSince = 0);
+  if (!idleSince) idleSince = Date.now();
+  if (Date.now() - idleSince < s.minutes * 60000) return;
+  idleSince = 0;
+  const { type, version } = current;
+  sleeper = { type, version, opts: { ...lastStart, eula: false }, port: Number(core.readProps(dir)['server-port']) || 25565, probe: null, pending: true };
+  log(`На сервере никого нет ${s.minutes} минут — сервер засыпает, чтобы не занимать память. Проснётся сам, когда кто-то попробует зайти.`);
+  stopServer();
+}
+setInterval(sleepTick, 30000);
+
+async function sleepListen() {
+  const sl = sleeper;
+  if (!sl) return;
+  const title = serverTitle(sl.type, sl.version);
+  try {
+    sl.probe = await probe.start(sl.port, '0.0.0.0', {
+      motd: `«${title}» спит — зайдите, чтобы разбудить`,
+      kick: 'Сервер просыпается — зайдите снова через минуту',
+      onLogin: () => wake(),
+    });
+    sl.since = Date.now();
+    log(`Сервер спит. Лаунчер ждёт игроков на порту ${sl.port}.`);
+  } catch (e) {
+    log(`Не получилось ждать игроков на порту: ${e.message}. Сервер просто остановлен.`, 'error');
+    if (sleeper === sl) sleeper = null;
+    closeUpnp();
+    if (playitAuto) stopPlayit();
+  }
+  send('sleep', sleepInfo());
+  if (tray) trayMenu();
+}
+async function wake() {
+  const sl = sleeper;
+  if (!sl || sl.waking || sl.pending) return;
+  sl.waking = true;
+  if (sl.probe) await sl.probe.close();
+  sleeper = null;
+  send('sleep', null);
+  log('Кто-то заходит — бужу сервер…');
+  startServer(sl.opts).catch((e) => log(`Сервер не проснулся: ${e.message}`, 'error'));
+}
+/** Перестать спать. keepNet — сервер сейчас запустится сам (порт и туннель не трогаем). */
+async function sleepCancel(keepNet) {
+  const sl = sleeper;
+  if (!sl) return;
+  sleeper = null;
+  if (sl.probe) await sl.probe.close();
+  if (!keepNet) {
+    await closeUpnp();
+    if (playitAuto) stopPlayit();
+    log('Сервер больше не спит: выключен.');
+  }
+  send('sleep', null);
+  if (tray) trayMenu();
+}
+handle('sleep:get', () => sleepInfo());
+handle('sleep:wake', () => wake());
 
 // ---- перезапуск после падения ----
 
@@ -950,27 +1090,97 @@ async function getJson(url) {
   return res.json();
 }
 
-handle('net:check', async ({ type, version }) => {
-  if (!isCurrent(type, version) || state !== 'running') throw new Error('Проверить можно только работающий сервер — сначала запустите его');
-  const props = core.readProps(serverDir(type, version));
-  if (props['server-ip']) throw new Error('Сервер привязан к одному адресу (вкладка «Настройки» → IP сервера) — из интернета он не виден');
-  const port = Number(props['server-port']) || 25565;
-  let publicIp;
+async function publicIpNow() {
   try {
-    publicIp = (await getJson('https://api.ipify.org?format=json')).ip;
+    return (await getJson('https://api.ipify.org?format=json')).ip;
   } catch {
     throw new Error('Не удалось узнать внешний адрес — проверьте подключение к интернету');
   }
-  const out = { port, publicIp, upnp: upnpState, cgnat: false, reachable: false };
-  if (upnpState && upnpState.externalIp && (upnp.isPrivateIp(upnpState.externalIp) || upnpState.externalIp !== publicIp)) out.cgnat = true;
+}
+async function mcsrvOnline(ip, port) {
   try {
-    const j = await getJson(`https://api.mcsrvstat.us/3/${encodeURIComponent(publicIp)}:${port}`);
-    out.reachable = !!j.online;
+    return !!(await getJson(`https://api.mcsrvstat.us/3/${encodeURIComponent(ip)}:${port}`)).online;
   } catch {
     throw new Error('Сервис проверки (mcsrvstat.us) не ответил — попробуйте через минуту');
   }
+}
+
+// Если сервер выключен, порт проверяется пробным ответчиком (lib/probe.js): лаунчер
+// на несколько секунд занимает порт и отвечает на запрос статуса как сервер Minecraft.
+// Сам сервер при этом не запускается, EULA не нужна.
+handle('net:check', async ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const props = core.readProps(dir);
+  if (props['server-ip']) throw new Error('Сервер привязан к одному адресу (вкладка «Настройки» → IP сервера) — из интернета он не виден');
+  const port = Number(props['server-port']) || 25565;
+  const live = isCurrent(type, version) && state === 'running';
+  if (!live && state !== 'stopped') throw new Error(isCurrent(type, version) ? 'Сервер запускается или останавливается — проверьте через минуту' : 'Сейчас работает другой сервер — остановите его, чтобы проверить порт этого');
+  const publicIp = await publicIpNow();
+  rememberIp(publicIp);
+  const out = { port, publicIp, upnp: upnpState, cgnat: false, reachable: false, probe: !live };
+  if (live) {
+    if (upnpState && upnpState.externalIp && (upnp.isPrivateIp(upnpState.externalIp) || upnpState.externalIp !== publicIp)) out.cgnat = true;
+    out.reachable = await mcsrvOnline(publicIp, port);
+    return out;
+  }
+  const p = await probe.start(port);
+  let tempUpnp = null;
+  try {
+    if (backup.readSettings(dir).net.upnp) {
+      try {
+        tempUpnp = await upnp.openPort(port, 'Minecraft server (Blockhost)');
+        out.upnp = { port, externalIp: tempUpnp.externalIp };
+      } catch (e) {
+        out.upnpError = e.message;
+      }
+    }
+    if (out.upnp && out.upnp.externalIp && (upnp.isPrivateIp(out.upnp.externalIp) || out.upnp.externalIp !== publicIp)) out.cgnat = true;
+    out.reachable = await mcsrvOnline(publicIp, port);
+    // mcsrvstat.us держит результат в кэше; подключение к нам извне — прямое доказательство.
+    if (!out.reachable) out.reachable = p.external();
+  } finally {
+    await p.close();
+    if (tempUpnp) await Promise.race([upnp.closePort(port).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  }
   return out;
 });
+
+// ---- слежение за внешним IP: у многих провайдеров он меняется ----
+
+let ipTimer = null;
+function rememberIp(ip) {
+  const prev = readUi().publicIp;
+  if (prev === ip) return null;
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), publicIp: ip }), 'utf8');
+  return prev || null;
+}
+async function ipTick() {
+  if (state !== 'running' || !current) return;
+  const dir = serverDir(current.type, current.version);
+  const props = core.readProps(dir);
+  if (props['server-ip']) return;
+  let ip;
+  try {
+    ip = await publicIpNow();
+  } catch {
+    return; // нет интернета — проверим в следующий раз
+  }
+  const prev = rememberIp(ip);
+  if (!prev) return;
+  const port = Number(props['server-port']) || 25565;
+  const addr = ip + (port === 25565 ? '' : ':' + port);
+  log(`Внешний IP изменился: был ${prev}, теперь ${ip}. Новый адрес для друзей из интернета: ${addr}.`, 'error');
+  send('net', { upnp: upnpState, ipChanged: { from: prev, to: ip, addr } });
+  tgNotify('start', `🌐 Внешний IP изменился. Новый адрес сервера: ${addr}`);
+}
+function ipWatch(on) {
+  clearInterval(ipTimer);
+  ipTimer = null;
+  if (!on) return;
+  setTimeout(ipTick, 5000);
+  ipTimer = setInterval(ipTick, 30 * 60000);
+}
 
 handle('net:upnp', async ({ type, version, on }) => {
   const dir = serverDir(type, version);
@@ -1883,6 +2093,7 @@ function powerTick() {
         break;
       }
     }
+    if (!inside && prev === true && sleeper && sleeper.type === type && sleeper.version === version) sleepCancel(false);
     if (!inside && prev === true && mine) {
       log(`Расписание: выключаю «${title}».`);
       tgNotify('start', `🌙 «${title}» выключается по расписанию.`);
@@ -1958,11 +2169,11 @@ handle('sp:openSaves', () => {
 // ---- Telegram ----
 
 const TG_FILE = () => path.join(app.getPath('userData'), 'telegram.json');
-const TG_EVENTS = { start: true, players: true, crash: true };
-const TG_HELP = 'Команды:\n/status — что с сервером\n/on — запустить\n/off — остановить\n/say текст — написать игрокам';
+const TG_EVENTS = { start: true, players: true, crash: true, report: true };
+const TG_HELP = 'Команды:\n/status — что с сервером\n/report — отчёт за неделю\n/on — запустить\n/off — остановить\n/say текст — написать игрокам';
 let tgCode = null; // { code, until } — код привязки чата
 
-const tg = createTelegram({
+const tgRaw = createTelegram({
   fetchFn: (url, opts) => net.fetch(url, opts),
   onMessage: tgMessage,
   onFatal: (msg) => {
@@ -1971,6 +2182,14 @@ const tg = createTelegram({
   },
 });
 
+// Сообщения бота — на языке интерфейса.
+const tg = new Proxy(tgRaw, {
+  get(t, k) {
+    if (k === 'send') return (chatId, text) => t.send(chatId, T(text));
+    const v = t[k];
+    return typeof v === 'function' ? v.bind(t) : v;
+  },
+});
 function tgRead() {
   try {
     return JSON.parse(fs.readFileSync(TG_FILE(), 'utf8')) || {};
@@ -2017,6 +2236,7 @@ function tgBoot() {
 const tgNewCode = () => (tgCode = { code: String(require('crypto').randomInt(100000, 1000000)), until: Date.now() + 10 * 60000 });
 
 function tgStatus() {
+  if (sleeper && !sleeper.pending) return `😴 «${serverTitle(sleeper.type, sleeper.version)}» спит — проснётся, когда кто-то зайдёт.`;
   if (!current || state === 'stopped') {
     const last = readUi().lastStart;
     return `🔴 Сервер выключен.${last ? `\nПоследний: «${serverTitle(last.type, last.version)}» — /on, чтобы запустить.` : ''}`;
@@ -2049,6 +2269,7 @@ async function tgMessage(m) {
   if (chatId !== c.chatId) return; // чужие чаты молча пропускаем
   if (['start', 'help'].includes(cmd.cmd)) return tg.send(chatId, TG_HELP);
   if (cmd.cmd === 'status') return tg.send(chatId, tgStatus());
+  if (cmd.cmd === 'report') return weeklyReport(true);
   if (!['on', 'off', 'say'].includes(cmd.cmd)) return tg.send(chatId, TG_HELP);
   if (!c.control) return tg.send(chatId, 'Управление из Telegram выключено. Включить: лаунчер → «Настройки» → «Telegram».');
   if (cmd.cmd === 'on') {
@@ -2089,7 +2310,7 @@ handle('tg:connect', async ({ token }) => {
 });
 handle('tg:set', ({ events, control }) => {
   const e = events || {};
-  tgWrite({ events: { start: !!e.start, players: !!e.players, crash: !!e.crash }, control: !!control });
+  tgWrite({ events: { start: !!e.start, players: !!e.players, crash: !!e.crash, report: e.report !== false }, control: !!control });
   return tgInfo();
 });
 handle('tg:test', async () => {
@@ -2788,6 +3009,264 @@ app.whenReady().then(() => {
   if ((readUi().widget || {}).open) setTimeout(openWidget, 1500);
 });
 
+// ---- поиск мода, из-за которого сервер падает ----
+// Запуски идут на временном мире (настоящий мир без половины модов испортился бы),
+// выключенные моды лежат в mcl-modtest-off. Всё возвращается на место в любом случае.
+
+function modtestPush() {
+  send('modtest', modTest ? { ...modTest.pub } : null);
+}
+function modtestBoot(dir, java, ram, inst) {
+  return new Promise((resolve) => {
+    const tail = [];
+    let done = false;
+    const proc = spawn(java.path, ['-Xms1G', `-Xmx${java.bits === 32 ? 1 : ram}G`, '-Djava.net.useSystemProxies=true', '-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', ...inst.args, 'nogui'], { cwd: dir, windowsHide: true });
+    modTest.proc = proc;
+    const hang = setTimeout(() => {
+      tail.push('[лаунчер] Сервер не запустился за 15 минут — считаю, что он завис.');
+      proc.kill();
+    }, 15 * 60000);
+    const onData = (d) => {
+      for (const raw of String(d).split('\n')) {
+        const line = cleanLine(raw);
+        if (!line) continue;
+        tail.push(line);
+        if (tail.length > 80) tail.shift();
+        if (!done && /Done \(/.test(line)) {
+          done = true;
+          try {
+            proc.stdin.write('stop\n');
+          } catch {
+            /* уже завершается */
+          }
+          setTimeout(() => proc.kill(), 90000).unref();
+        }
+      }
+    };
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('error', (e) => tail.push(e.message));
+    proc.on('close', () => {
+      clearTimeout(hang);
+      modTest.proc = null;
+      resolve({ ok: done, tail });
+    });
+  });
+}
+
+handle('modtest:get', () => (modTest ? { ...modTest.pub } : null));
+handle('modtest:cancel', () => {
+  if (!modTest) return;
+  modTest.cancelled = true;
+  if (modTest.proc) modTest.proc.kill();
+  log('Поиск сломанного мода отменяется…');
+});
+handle('modtest:start', async ({ type, version }) => {
+  if (modTest) throw new Error('Поиск уже идёт');
+  if (state !== 'stopped' || child) throw new Error('Остановите сервер — поиск сам будет запускать его много раз');
+  if (!isModded(type)) throw new Error('Поиск нужен только серверам с модами');
+  const dir = serverDir(type, version);
+  if (runner.has(bgKey(type, version))) throw new Error('Этот сервер работает в фоне — остановите его');
+  if (!core.eulaAccepted(dir)) throw new Error('Сначала примите лицензионное соглашение и запустите сервер хотя бы раз');
+  const inst = core.readInstall(dir);
+  if (!inst) throw new Error('Сервер ещё не установлен — нажмите «Запустить» хотя бы раз');
+  if (sleeper) await sleepCancel(false);
+  const writeLevel = (lvl) => core.writeProps(dir, { 'level-name': lvl });
+  if (bisect.pending(dir)) bisect.restore(dir, writeLevel);
+  const list = bisect.graph(path.join(dir, 'mods'));
+  if (!list.length) throw new Error('В папке mods нет модов');
+  const params = startParams(type, version);
+  const java = await chooseJava(type, version, params.javaPath);
+  const ram = Math.max(1, Math.min(memoryInfo().maxGb, Math.round(Number(params.ramGb)) || 2));
+  const search = bisect.createSearch(list);
+  modTest = { dir, proc: null, cancelled: false, pub: { type, version, run: 0, left: search.left(), total: list.length, enabled: list.length, text: 'Делаю копию мира…' } };
+  modtestPush();
+  const nameOf = (f) => (list.find((m) => m.file === f) || {}).name || f;
+  (async () => {
+    let result = null;
+    let lastTail = [];
+    try {
+      if (backup.worldDirs(dir).length) await makeBackup(dir, 'before-modtest', false);
+      bisect.begin(dir, core.readProps(dir)['level-name'] || 'world');
+      writeLevel(bisect.TEST_LEVEL);
+      log(`Ищу мод, из-за которого падает сервер. Модов: ${list.length}, понадобится примерно ${search.left()} запусков. Запуски идут на временном мире — ваш мир не трогается.`);
+      for (;;) {
+        const step = search.next();
+        if (step.done) {
+          result = step;
+          break;
+        }
+        if (modTest.cancelled) break;
+        bisect.arrange(dir, step.enable);
+        for (const sfx of ['', '_nether', '_the_end']) fs.rmSync(path.join(dir, bisect.TEST_LEVEL + sfx), { recursive: true, force: true });
+        Object.assign(modTest.pub, { run: search.runs + 1, left: search.left(), enabled: step.enable.length, text: `Запуск ${search.runs + 1}: ${step.enable.length} модов из ${list.length}…` });
+        modtestPush();
+        log(modTest.pub.text);
+        const r = await modtestBoot(dir, java, ram, inst);
+        if (modTest.cancelled) break;
+        log(r.ok ? '  → запустился нормально.' : '  → упал.', r.ok ? 'info' : 'error');
+        if (!r.ok) lastTail = r.tail;
+        search.report(!r.ok);
+      }
+    } catch (e) {
+      log(`Поиск остановлен: ${e.message}`, 'error');
+      result = { error: e.message };
+    } finally {
+      try {
+        bisect.restore(dir, writeLevel);
+      } catch (e) {
+        log(`Не удалось вернуть всё на место: ${e.message}. Моды лежат в папке ${bisect.OFF_DIR} сервера.`, 'error');
+      }
+    }
+    let out;
+    if (modTest.cancelled) out = { cancelled: true };
+    else if (!result || result.error) out = { error: (result && result.error) || 'Неизвестная ошибка' };
+    else if (result.noRepro) out = { noRepro: true };
+    else if (result.combo) out = { combo: true };
+    else out = { culprit: { file: result.culprit, name: nameOf(result.culprit) }, needs: (result.needs || []).map(nameOf) };
+    if (out.culprit) {
+      log(`Нашёл: сервер падает из-за мода «${out.culprit.name}» (${out.culprit.file})${out.needs.length ? `, вместе с ${out.needs.join(', ')}` : ''}.`, 'error');
+      const tail = lastTail.filter((l) => /error|exception|caused by/i.test(l)).slice(-3);
+      if (tail.length) out.tail = tail;
+    } else if (out.noRepro) log('Со всеми модами сервер на чистом мире запускается нормально — дело, похоже, в самом мире или в настройках.');
+    else if (out.combo) log('Каждая половина модов по отдельности запускается — сервер падает только от сочетания модов.', 'error');
+    else if (out.cancelled) log('Поиск отменён, всё вернул как было.');
+    out.runs = search.runs;
+    out.type = type;
+    out.version = version;
+    modTest = null;
+    send('modtest', { done: true, ...out });
+  })();
+  return modTest.pub;
+});
+// Убрать найденный мод: файл переезжает в папку mods-disabled (не удаляется).
+handle('modtest:disable', ({ type, version, file }) => {
+  if (isCurrent(type, version) && state !== 'stopped') throw new Error('Остановите сервер');
+  const dir = serverDir(type, version);
+  const from = mods.modPath(type, dir, String(file || ''), 'mod');
+  if (!fs.existsSync(from)) throw new Error('Файл мода не найден');
+  const to = path.join(dir, 'mods-disabled', path.basename(from));
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.renameSync(from, to);
+  log(`Мод ${path.basename(from)} убран в папку mods-disabled — вернуть можно, переложив его обратно в mods.`);
+});
+function modtestRecover() {
+  try {
+    for (const d of fs.readdirSync(ROOT, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const dir = path.join(ROOT, d.name);
+      if (bisect.pending(dir)) bisect.restore(dir, (lvl) => core.writeProps(dir, { 'level-name': lvl }));
+    }
+  } catch {
+    /* папки серверов ещё нет */
+  }
+}
+
+// ---- «моды не совпадают»: что прислал друг ----
+
+handle('mismatch:analyze', ({ type, version, text }) => {
+  const t = String(text || '').slice(0, 50000);
+  if (!t.trim()) throw new Error('Вставьте текст ошибки, который видит друг');
+  const r = mismatch.analyze(t, bisect.graph(path.join(serverDir(type, version), 'mods')));
+  return {
+    found: r.found,
+    missing: r.missing.map((m) => ({ name: m.name, file: m.file })),
+    mismatch: r.mismatch.map((m) => ({ name: m.name, file: m.file })),
+    extra: r.extra,
+  };
+});
+
+// ---- рецепт сервера ----
+
+let pendingRecipe = null;
+handle('recipe:export', async ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const st = backup.readSettings(dir);
+  const inst = core.readInstall(dir);
+  const loader = (inst && inst.loader) || startParams(type, version).loader || null;
+  const title = st.name || serverTitle(type, version);
+  log('Собираю рецепт сервера: узнаю моды на Modrinth…');
+  const { recipe: r, manual } = await recipe.build({ dir, type, mc: version, loader: isModded(type) ? loader : null, name: title, props: core.readProps(dir), gamerules: st.gamerules });
+  const safe = title.replace(/[\\/:*?"<>|]+/g, '').trim() || 'server';
+  const res = await dialog.showSaveDialog(win, {
+    title: 'Сохранить рецепт сервера',
+    defaultPath: path.join(app.getPath('desktop'), `${safe}.${recipe.EXT}`),
+    filters: [{ name: 'Рецепт Блокхоста', extensions: [recipe.EXT] }],
+  });
+  if (res.canceled || !res.filePath) return null;
+  fs.writeFileSync(res.filePath, JSON.stringify(r, null, 1), 'utf8');
+  log(`Рецепт сохранён: ${res.filePath}.`);
+  return { file: res.filePath, files: r.files.length, manual };
+});
+handle('recipe:open', async () => {
+  const res = await dialog.showOpenDialog(win, {
+    title: 'Рецепт сервера',
+    filters: [{ name: 'Рецепт Блокхоста', extensions: [recipe.EXT] }],
+    properties: ['openFile'],
+  });
+  if (res.canceled || !res.filePaths[0]) return null;
+  const file = res.filePaths[0];
+  if (fs.statSync(file).size > 5 * 1024 * 1024) throw new Error('Файл слишком большой для рецепта');
+  const plan = recipe.parse(fs.readFileSync(file, 'utf8'));
+  const dir = serverDir(plan.type, plan.mc);
+  pendingRecipe = plan;
+  return { name: plan.name, type: plan.type, mc: plan.mc, loader: plan.loader, files: plan.files.length, manual: plan.manual, exists: fs.existsSync(dir) && fs.readdirSync(dir).length > 0 };
+});
+handle('recipe:apply', async () => {
+  const plan = pendingRecipe;
+  if (!plan) throw new Error('Сначала откройте рецепт');
+  const dir = serverDir(plan.type, plan.mc);
+  if (fs.existsSync(dir) && fs.readdirSync(dir).length) throw new Error(`Сервер ${serverTitle(plan.type, plan.mc)} уже есть — удалите его или перенесите на другую версию, чтобы поставить рецепт`);
+  pendingRecipe = null;
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    log(`Ставлю сервер по рецепту «${plan.name || serverTitle(plan.type, plan.mc)}»: файлов ${plan.files.length}…`);
+    await recipe.apply(plan, dir, { onLog: (t) => log(t), onProgress: (done, total) => send('progress', { got: done, total }) });
+    core.writeProps(dir, plan.props);
+    backup.writeSettings(dir, { gamerules: plan.gamerules, name: plan.name });
+  } catch (e) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
+  log(`Готово. Осталось принять лицензионное соглашение и нажать «Запустить» — лаунчер сам поставит ${plan.type} для Minecraft ${plan.mc}.`);
+  return { type: plan.type, mc: plan.mc, loader: plan.loader, manual: plan.manual };
+});
+
+// ---- отчёт за неделю в Telegram ----
+
+async function weeklyReport(force) {
+  const c = tgRead();
+  if (!c.chatId || !tg.running) return false;
+  if (!force && (!{ ...TG_EVENTS, ...(c.events || {}) }.report || !report.due(c.lastReport))) return false;
+  const sizes = { ...(c.reportSizes || {}) };
+  let sent = 0;
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory() && /^[a-z]+-.+$/.test(d.name)).map((d) => d.name);
+  } catch {
+    /* серверов нет */
+  }
+  for (const name of dirs) {
+    const dir = path.join(ROOT, name);
+    const r = report.collect(dir);
+    if (!r.active) continue;
+    const i = name.indexOf('-');
+    let bytes = 0;
+    for (const w of backup.worldDirs(dir)) bytes += await disk.dirSize(path.join(dir, w));
+    await tg.send(c.chatId, report.text(serverTitle(name.slice(0, i), name.slice(i + 1)), r, bytes, sizes[name]));
+    sizes[name] = bytes;
+    sent++;
+  }
+  if (!sent && force) await tg.send(c.chatId, 'За неделю серверы не запускались — отчитываться не о чем.');
+  tgWrite({ lastReport: Date.now(), reportSizes: sizes });
+  return true;
+}
+setInterval(() => weeklyReport(false).catch(() => {}), 3600000);
+setTimeout(() => weeklyReport(false).catch(() => {}), 60000);
+handle('tg:report', () => weeklyReport(true));
+
 // ---- оформление: светлая, тёмная или как в Windows ----
 
 const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
@@ -2880,6 +3359,7 @@ handle('server:start', (opts) => {
 handle('server:stop', () => {
   cancelCrashRestart(false);
   restartPending = false;
+  if (sleeper && !child) return sleepCancel(false);
   stopServer();
 });
 handle('server:restart', () => {
@@ -2960,7 +3440,7 @@ handle('pack:analyze', async ({ type, version }) => {
   };
 });
 
-handle('pack:export', async ({ type, version, files, format, name, packVersion, address, includeConfig }) => {
+handle('pack:export', async ({ type, version, files, format, name, packVersion, address, includeConfig, openApp }) => {
   const dir = serverDir(type, version);
   const modsDir = path.join(dir, 'mods');
   let cached = packCache.get(modsDir);
@@ -2978,6 +3458,32 @@ handle('pack:export', async ({ type, version, files, format, name, packVersion, 
   if (addr && !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(addr)) throw new Error('Адрес сервера указан неверно');
 
   const safe = title.replace(/[\\/:*?"<>|]+/g, '').trim() || 'modpack';
+  // «Открыть в Modrinth App»: сборка сохраняется в папку лаунчера и сразу открывается
+  // в Modrinth App — там она ставится как отдельный профиль одной кнопкой.
+  if (openApp && fmt === 'mrpack') {
+    const packsDir = path.join(app.getPath('userData'), 'packs');
+    fs.mkdirSync(packsDir, { recursive: true });
+    const out = path.join(packsDir, `${safe} ${ver}.mrpack`);
+    const inst = core.readInstall(dir);
+    const res = pack.build({
+      format: 'mrpack',
+      items,
+      modsDir,
+      configDir: path.join(dir, 'config'),
+      includeConfig: !!includeConfig,
+      name: title,
+      packVersion: ver,
+      mc: version,
+      loader: await core.clientLoader(type, version, inst && inst.loader),
+      server: addr ? { name: title, address: addr } : null,
+      outFile: out,
+    });
+    if (!modrinthAppInstalled()) return { path: out, ...res, noApp: true };
+    const err = await shell.openPath(out);
+    if (err) return { path: out, ...res, noApp: true };
+    log(`Сборка «${title}» открыта в Modrinth App.`);
+    return { path: out, ...res, opened: true };
+  }
   const r = await dialog.showSaveDialog(win, {
     title: 'Сохранить сборку для игроков',
     defaultPath: path.join(app.getPath('desktop'), `${safe} ${ver}.${fmt}`),
@@ -3000,6 +3506,14 @@ handle('pack:export', async ({ type, version, files, format, name, packVersion, 
   });
   return { path: r.filePath, ...res };
 });
+function modrinthAppInstalled() {
+  try {
+    return !!app.getApplicationNameForProtocol('modrinth://');
+  } catch {
+    return false;
+  }
+}
+handle('pack:modrinthApp', () => shell.openExternal('https://modrinth.com/app'));
 handle('pack:reveal', ({ path: p }) => {
   if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p);
 });
@@ -3222,6 +3736,7 @@ if (!app.requestSingleInstanceLock()) {
     if (readUi().remote) remote.enable(8765).catch((e) => log(`Управление с телефона не включилось: ${e.message}`, 'error'));
     updater.init(send);
     tgBoot();
+    modtestRecover();
   });
 }
 
@@ -3238,6 +3753,7 @@ function whatsNewOnce() {
 // При закрытии окна сначала аккуратно останавливаем сервер, чтобы мир сохранился.
 app.on('before-quit', (e) => {
   quitRequested = true;
+  if (sleeper) sleepCancel(false);
   if (runner.list().length) {
     e.preventDefault();
     runner.stopAll().then(() => app.quit());

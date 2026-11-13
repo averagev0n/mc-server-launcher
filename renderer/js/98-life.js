@@ -7,7 +7,7 @@
 let chatLines = [];
 let chatOnline = [];
 let chatUnread = 0;
-const hhmm = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const hhmm = (t) => new Date(t).toLocaleTimeString(I18N_LOCALE, { hour: '2-digit', minute: '2-digit' });
 
 function chatRow(m) {
   const row = document.createElement('div');
@@ -413,6 +413,7 @@ function showTg(t) {
     $('tg-start').checked = t.events.start;
     $('tg-players').checked = t.events.players;
     $('tg-crash').checked = t.events.crash;
+    $('tg-report').checked = t.events.report !== false;
     $('tg-control').checked = t.control;
   }
 }
@@ -443,7 +444,7 @@ for (const id of ['tg-cancel', 'tg-off']) {
 }
 $('tg-save').addEventListener('click', () =>
   tgDo(
-    () => api.call('tg:set', { events: { start: $('tg-start').checked, players: $('tg-players').checked, crash: $('tg-crash').checked }, control: $('tg-control').checked }),
+    () => api.call('tg:set', { events: { start: $('tg-start').checked, players: $('tg-players').checked, crash: $('tg-crash').checked, report: $('tg-report').checked }, control: $('tg-control').checked }),
     'Сохранено.'
   )
 );

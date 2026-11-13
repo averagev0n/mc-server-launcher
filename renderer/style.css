@@ -922,3 +922,11 @@ button.chat-name:hover { text-decoration: underline; }
 .iv-canvas { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); display: block; }
 .iv-form { display: flex; flex-direction: column; gap: 10px; }
 @media (max-width: 1000px) { .iv-wrap { grid-template-columns: 1fr; } }
+
+/* ---- спящий сервер, поиск сломанного мода, «моды не совпадают» ---- */
+.status[data-state="sleeping"] { color: var(--accent); background: var(--accent-soft); }
+.bs-bar { height: 6px; border-radius: 3px; background: var(--raise); overflow: hidden; margin: 10px 0 4px; }
+.bs-bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+#mm-text { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--input); color: var(--text); font: 13px/1.5 ui-monospace, Consolas, monospace; margin: 4px 0 8px; }
+.mm-out .hint { margin-top: 10px; }
+.mm-list { margin: 4px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.6; }

@@ -188,7 +188,7 @@ async function mapOpen() {
     const m = await api.call('maint:get', selected());
     const sel = $('map-backup');
     const keep = sel.value;
-    sel.replaceChildren(...m.backups.map((b) => new Option(`Копия: ${new Date(b.date).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}`, b.file)));
+    sel.replaceChildren(...m.backups.map((b) => new Option(`Копия: ${new Date(b.date).toLocaleString(I18N_LOCALE, { dateStyle: 'short', timeStyle: 'short' })}`, b.file)));
     if (m.backups.some((b) => b.file === keep)) sel.value = keep;
     $('map-changes').disabled = !m.backups.length;
   } catch {
@@ -469,7 +469,7 @@ function funRender(f) {
   $('ach-on').checked = f.enabled;
   const box = $('ach-list');
   const rows = [
-    ...f.achievements.firsts.map((a) => ['★', a.name, a.text, new Date(a.at).toLocaleDateString('ru-RU')]),
+    ...f.achievements.firsts.map((a) => ['★', a.name, a.text, new Date(a.at).toLocaleDateString(I18N_LOCALE)]),
     ...f.achievements.hours.map((a) => ['⏱', a.name, `${a.hours} ч в игре`, '']),
   ];
   box.replaceChildren(
@@ -536,7 +536,7 @@ async function bkShow() {
   $('bv-verify').disabled = !(mtData && mtData.backups.length);
   if (!last) return setHint('bv-hint', 'Раз в неделю лаунчер сам проверяет, что последнюю копию мира можно прочитать и восстановить. Проверок ещё не было.');
   const [file, r] = last;
-  const when = new Date(r.at).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+  const when = new Date(r.at).toLocaleString(I18N_LOCALE, { dateStyle: 'medium', timeStyle: 'short' });
   if (r.ok) setHint('bv-hint', `Копия ${file.slice(0, 16).replace('_', ' ')} проверена ${when}: читается целиком, мир в ней цел (областей: ${r.regions}).`, 'good');
   else setHint('bv-hint', `Копия ${file.slice(0, 16).replace('_', ' ')} повреждена: ${r.error}. Сделайте новую копию.`, 'bad');
 }

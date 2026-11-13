@@ -97,7 +97,7 @@ async function openPlayer(name) {
   $('pc-inv-title').textContent = !d
     ? 'Сервер ещё не сохранил данные этого игрока.'
     : items.length
-      ? `Инвентарь${c.online ? '' : ` (на момент выхода, ${new Date(d.savedAt).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })})`}`
+      ? `Инвентарь${c.online ? '' : ` (на момент выхода, ${new Date(d.savedAt).toLocaleString(I18N_LOCALE, { dateStyle: 'short', timeStyle: 'short' })})`}`
       : 'Инвентарь пуст';
   $('pc-inv').replaceChildren(
     ...items.map((it) => {
@@ -251,7 +251,7 @@ function fillBackupSelect() {
   const sel = $('rg-file');
   const keep = sel.value;
   const list = (mtData && mtData.backups) || [];
-  sel.replaceChildren(...list.map((b) => new Option(`${new Date(b.date).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' })} · ${b.label}`, b.file)));
+  sel.replaceChildren(...list.map((b) => new Option(`${new Date(b.date).toLocaleString(I18N_LOCALE, { dateStyle: 'medium', timeStyle: 'short' })} · ${b.label}`, b.file)));
   if (list.some((b) => b.file === keep)) sel.value = keep;
   const none = !list.length;
   $('rg-compare').disabled = $('rg-restore-xz').disabled = none;

@@ -317,7 +317,7 @@ function agoText(ms) {
   if (new Date(ms).toDateString() === new Date().toDateString()) return 'сегодня';
   if (days <= 1) return 'вчера';
   if (days < 30) return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
-  return new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return new Date(ms).toLocaleDateString(I18N_LOCALE, { day: 'numeric', month: 'long' });
 }
 async function loadPlayerStats() {
   const box = $('pl-all');
@@ -473,12 +473,15 @@ renderAddress = function (show) {
 };
 // Запоминаем адрес, если проверка подтвердила, что сервер виден из интернета.
 const baseCheckInternet = checkInternet;
-checkInternet = async function () {
-  await baseCheckInternet();
-  const text = $('net-result').textContent;
-  const m = text.match(/Адрес для друзей: (\S+)/);
+checkInternet = async function (target = 'net-result') {
+  await baseCheckInternet(target);
+  const text = $(target).textContent;
+  const m = text.match(/(?:[Аа]дрес для друзей|[Aa]ddress for friends(?: is)?): (\S+)/);
   if (m) lastPublic = m[1];
 };
+api.on('net', (d) => {
+  if (d && d.ipChanged) lastPublic = d.ipChanged.addr;
+});
 
 // ---- готовый сервер из другой папки ----
 

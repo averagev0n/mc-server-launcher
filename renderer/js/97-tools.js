@@ -208,7 +208,7 @@ async function renderLogs() {
     ...list.slice(0, 80).map((it) => {
       const b = el('button', 'lg-item' + (it.kind === 'crash' ? ' crash' : ''));
       b.type = 'button';
-      const when = new Date(it.mtime).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const when = new Date(it.mtime).toLocaleString(I18N_LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       b.append(el('b', '', it.kind === 'crash' ? 'Сбой сервера' : it.name === 'latest.log' ? 'Последний запуск' : it.name.replace(/\.log(\.gz)?$/, '')), el('span', '', `${when} · ${gbText(it.size)}`));
       b.addEventListener('click', () => openLog(it, b));
       return b;
@@ -514,7 +514,7 @@ async function searchPacks(q) {
       if (p.icon) img.src = p.icon;
       const body = el('div', 'item-body');
       const title = el('div', 'item-title');
-      title.append(el('span', 'name plain', p.title), el('span', 'meta', `${(p.downloads / 1e6 >= 1 ? (p.downloads / 1e6).toFixed(1).replace('.', ',') + ' млн' : Math.round(p.downloads / 1000) + ' тыс.')} загрузок${p.versions.length ? ' · Minecraft ' + p.versions[p.versions.length - 1] : ''}`));
+      title.append(el('span', 'name plain', p.title), el('span', 'meta', `${formatCount(p.downloads)} загрузок${p.versions.length ? ' · Minecraft ' + p.versions[p.versions.length - 1] : ''}`));
       body.append(title, el('p', 'item-desc', p.description));
       const go = btnEl('Создать сервер', async () => {
         if (state !== 'stopped') return setHint('mp-hint', 'Остановите сервер, прежде чем ставить сборку.', 'warn');

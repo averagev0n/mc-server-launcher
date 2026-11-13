@@ -3,13 +3,15 @@
 // ---- моды ----
 
 function formatCount(n) {
-  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.', ',') + ' млн';
-  if (n >= 1e3) return Math.round(n / 1e3) + ' тыс.';
+  const en = window.I18N_LANG === 'en';
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.', en ? '.' : ',') + (en ? 'M' : ' млн');
+  if (n >= 1e3) return Math.round(n / 1e3) + (en ? 'K' : ' тыс.');
   return String(n);
 }
 function formatSize(b) {
-  if (b >= 1048576) return (b / 1048576).toFixed(1).replace('.', ',') + ' МБ';
-  return Math.max(1, Math.round(b / 1024)) + ' КБ';
+  const en = window.I18N_LANG === 'en';
+  if (b >= 1048576) return (b / 1048576).toFixed(1).replace('.', en ? '.' : ',') + (en ? ' MB' : ' МБ');
+  return Math.max(1, Math.round(b / 1024)) + (en ? ' KB' : ' КБ');
 }
 
 function itemShell(iconUrl) {
