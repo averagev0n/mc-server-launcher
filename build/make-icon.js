@@ -1,4 +1,4 @@
-// Рисует иконку приложения (блок травы, пиксель-арт 16×16) в build/icon.png размером 512×512.
+// Рисует иконку приложения «Блокхост» (пиксель-арт 16×16) в build/icon.png размером 512×512.
 // Запуск: node build/make-icon.js
 const fs = require('fs');
 const path = require('path');
@@ -8,23 +8,30 @@ const SIZE = 512;
 const GRID = 16;
 const CELL = SIZE / GRID;
 
-// Детерминированный «шум», чтобы иконка всегда получалась одинаковой.
-let seed = 7;
-const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-
-const GREENS = [[93, 168, 66], [82, 150, 58], [106, 184, 76], [74, 138, 52]];
-const DIRT = [[134, 96, 67], [121, 85, 58], [150, 108, 74], [104, 74, 50]];
-const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-
-// Сколько клеток травы сверху в каждом столбце (неровный край).
-const grassDepth = Array.from({ length: GRID }, () => 4 + Math.floor(rnd() * 3));
-
-const cells = [];
-for (let y = 0; y < GRID; y++) {
-  for (let x = 0; x < GRID; x++) {
-    cells.push(y < grassDepth[x] ? pick(GREENS) : pick(DIRT));
-  }
-}
+// Серверная стойка из блоков: трава сверху, три сервера с огоньками.
+const MAP = [
+  '................',
+  '..gggggggggggg..',
+  '..gGgggGggGggg..',
+  '..kkkkkkkkkkkk..',
+  '..kLLkkkkkhhhk..',
+  '..kkkkkkkkkkkk..',
+  '..mmmmmmmmmmmm..',
+  '..kkkkkkkkkkkk..',
+  '..kLLkkkkkhhhk..',
+  '..kkkkkkkkkkkk..',
+  '..mmmmmmmmmmmm..',
+  '..kkkkkkkkkkkk..',
+  '..kOLkkkkkhhhk..',
+  '..kkkkkkkkkkkk..',
+  '..mmmmmmmmmmmm..',
+  '................',
+];
+const PAL = {
+  '.': [59, 75, 94], g: [95, 174, 68], G: [74, 145, 53], k: [43, 48, 56], L: [109, 255, 138],
+  O: [255, 176, 46], h: [74, 82, 96], m: [23, 26, 31],
+};
+const cells = MAP.flatMap((row) => [...row].map((ch) => PAL[ch]));
 
 // RGBA с прозрачными скруглёнными углами.
 const radius = 64;
@@ -37,8 +44,7 @@ for (let y = 0; y < SIZE; y++) {
     const d = Math.hypot(cx, cy);
     const alpha = d <= radius - 1 ? 255 : d >= radius ? 0 : Math.round((radius - d) * 255);
     const c = cells[Math.floor(y / CELL) * GRID + Math.floor(x / CELL)];
-    // Лёгкая тень по нижнему краю для объёма.
-    const shade = y > SIZE * 0.75 ? 0.88 : 1;
+    const shade = 1;
     px[i] = Math.round(c[0] * shade);
     px[i + 1] = Math.round(c[1] * shade);
     px[i + 2] = Math.round(c[2] * shade);

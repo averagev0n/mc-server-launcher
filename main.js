@@ -28,6 +28,11 @@ const { createRemote } = require('./lib/remote');
 const tar = require('tar');
 const { createRunner, freePort } = require('./lib/runner');
 const velocity = require('./lib/velocity');
+const power = require('./lib/power');
+const history = require('./lib/history');
+const chat = require('./lib/chat');
+const singleplayer = require('./lib/singleplayer');
+const { createTelegram, parseCommand } = require('./lib/telegram');
 
 // Сеть через Chromium: так учитываются системные настройки прокси.
 core.setFetch((url, opts) => net.fetch(url, opts));
@@ -230,7 +235,13 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   online = new Set();
   maxPlayers = Number(core.readProps(dir)['max-players']) || 20;
   sendPlayers();
-  stopMonitor = startMonitor(proc.pid, (s) => send('stats', { ...s, ramGb: java.bits === 32 ? 1 : ram, players: online.size, uptime: Date.now() - startedAt, tps: lastTps }));
+  hist = history.createHistory(dir);
+  stopMonitor = startMonitor(proc.pid, (s) => {
+    if (hist) hist.add({ players: online.size, tps: lastTps ? lastTps.tps : null, memMb: s.memMb, cpu: s.cpu });
+    send('stats', { ...s, ramGb: java.bits === 32 ? 1 : ram, players: online.size, uptime: Date.now() - startedAt, tps: lastTps });
+  });
+  chatLines = [];
+  gameActive = null;
 
   const pipe = (stream, kind) => {
     let buf = '';
@@ -372,6 +383,8 @@ function waitForLog(re, ms) {
 }
 
 function addLogLine(line) {
+  const said = chat.parseChat(line);
+  if (said) addChat({ ...said, at: Date.now() });
   if (/chunky/i.test(line)) chunkyLine(line);
   const ev = players.parseLine(line);
   if (ev) {
@@ -647,13 +660,14 @@ let quitRequested = false;
 let tray = null;
 let trayHinted = false;
 
-const PREF_DEFAULTS = { tray: true, autostart: false, autoStartServer: false, notify: { started: true, players: true, crash: true } };
+const PREF_DEFAULTS = { tray: true, autostart: false, autoStartServer: false, gamePriority: true, notify: { started: true, players: true, crash: true } };
 function prefs() {
   const p = readUi().prefs || {};
   return {
     tray: p.tray ?? PREF_DEFAULTS.tray,
     autostart: p.autostart ?? false,
     autoStartServer: p.autoStartServer ?? false,
+    gamePriority: p.gamePriority ?? PREF_DEFAULTS.gamePriority,
     notify: { ...PREF_DEFAULTS.notify, ...(p.notify || {}) },
   };
 }
@@ -690,7 +704,7 @@ function trayMenu() {
   const tip = busy
     ? `${serverTitle(current.type, current.version)} — ${state === 'running' ? `работает, игроков: ${online.size}` : 'запускается…'}`
     : 'Сервер не запущен';
-  tray.setToolTip(`Лаунчер сервера Minecraft\n${tip}`);
+  tray.setToolTip(`Блокхост\n${tip}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Открыть лаунчер', click: showWindow },
@@ -713,7 +727,7 @@ function ensureTray() {
 
 async function openUpnp(port) {
   try {
-    const r = await upnp.openPort(port, 'Minecraft server (MC Server Launcher)');
+    const r = await upnp.openPort(port, 'Minecraft server (Blockhost)');
     upnpState = { port, externalIp: r.externalIp };
     if (r.externalIp && upnp.isPrivateIp(r.externalIp)) {
       log(`Порт ${port} открыт на роутере, но у роутера «серый» адрес ${r.externalIp}: провайдер не даёт внешний IP, из интернета сервер всё равно не будет виден.`, 'error');
@@ -747,6 +761,7 @@ function onState(next) {
     const title = serverTitle(type, version);
     const s = currentSettings();
     notify('Сервер запущен', `«${title}» готов — можно заходить.`, false, 'started');
+    tgNotify('start', `🟢 Сервер «${title}» запущен (Minecraft ${version}).`);
     if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🟢 Сервер **${escapeMd(title)}** запущен (Minecraft ${version}).`);
     if (s.net.upnp) openUpnp(Number(core.readProps(serverDir(type, version))['server-port']) || 25565).catch(() => {});
     if (applyGamerules(type, version)) log('Правила игры из лаунчера применены.');
@@ -772,6 +787,7 @@ function onPlayer(name, joined) {
   if (!win || !win.isVisible() || !win.isFocused()) {
     notify(joined ? `${name} зашёл на сервер` : `${name} вышел с сервера`, serverTitle(current.type, current.version), false, 'players');
   }
+  tgNotify('players', joined ? `➡️ ${name} зашёл на сервер` : `⬅️ ${name} вышел с сервера`);
   if (s.discord.url && s.discord.players) {
     discord.send(s.discord.url, joined ? `➡️ **${escapeMd(name)}** зашёл на сервер` : `⬅️ ${escapeMd(name)} вышел с сервера`);
   }
@@ -781,15 +797,19 @@ function onStopped({ dir, type, version, code, stoppedByUser }) {
   closeUpnp();
   if (tracker) tracker.closeAll();
   tracker = null;
+  if (hist) hist.flush();
+  hist = null;
   lastTps = null;
   if (playitAuto) stopPlayit();
   const s = backup.readSettings(dir);
   const title = serverTitle(type, version);
   if (code && !stoppedByUser) {
     notify('Сервер упал', `«${title}» остановился с ошибкой. Объяснение — в лаунчере.`, false, 'crash');
+    tgNotify('crash', `⚠️ Сервер «${title}» упал (код ${code}).`);
     if (s.discord.url && s.discord.crash) discord.send(s.discord.url, `⚠️ Сервер **${escapeMd(title)}** упал (код ${code}).`);
-  } else if (s.discord.url && s.discord.start) {
-    discord.send(s.discord.url, `🔴 Сервер **${escapeMd(title)}** остановлен.`);
+  } else {
+    tgNotify('start', `🔴 Сервер «${title}» остановлен.`);
+    if (s.discord.url && s.discord.start) discord.send(s.discord.url, `🔴 Сервер **${escapeMd(title)}** остановлен.`);
   }
 }
 
@@ -836,6 +856,7 @@ handle('ui:setPrefs', (input) => {
     tray: !!(input.tray ?? cur.tray),
     autostart: !!(input.autostart ?? cur.autostart),
     autoStartServer: !!(input.autoStartServer ?? cur.autoStartServer),
+    gamePriority: !!(input.gamePriority ?? cur.gamePriority),
     notify: {
       started: !!((input.notify || {}).started ?? cur.notify.started),
       players: !!((input.notify || {}).players ?? cur.notify.players),
@@ -1077,7 +1098,9 @@ function saveLastStart(opts) {
   try {
     const { type, version, loader, ramGb, javaPath } = opts;
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
-    fs.writeFileSync(UI_FILE(), JSON.stringify({ ...readUi(), lastStart: { type, version, loader, ramGb, javaPath } }), 'utf8');
+    const ui = readUi();
+    const starts = { ...(ui.starts || {}), [`${type}-${version}`]: { type, version, loader, ramGb, javaPath } };
+    fs.writeFileSync(UI_FILE(), JSON.stringify({ ...ui, starts, lastStart: { type, version, loader, ramGb, javaPath } }), 'utf8');
   } catch {
     /* не страшно */
   }
@@ -1724,6 +1747,353 @@ handle('net2:remove', () => {
   fs.rmSync(NET_FILE(), { force: true });
 });
 
+// ---- нагрузка за неделю ----
+
+let hist = null; // учёт текущего запуска
+
+handle('history:get', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const points = isCurrent(type, version) && hist ? hist.points() : history.read(dir);
+  return { points, summary: history.summary(points) };
+});
+
+// ---- чат игроков ----
+
+let chatLines = []; // { name, text, at, own?, to?, via? }
+function addChat(m) {
+  chatLines.push(m);
+  if (chatLines.length > 300) chatLines.shift();
+  send('chat', m);
+}
+handle('chat:get', () => ({ lines: chatLines, running: !!child && state === 'running', online: [...online] }));
+handle('chat:send', ({ to, text }) => {
+  if (!child || state !== 'running') throw new Error('Сервер не запущен');
+  const target = to || '@a';
+  runCmd(chat.tellraw(target, text));
+  addChat({ name: null, to: target === '@a' ? null : target, text: String(text).trim().slice(0, 240), at: Date.now(), own: true });
+});
+
+// ---- игра на этом ПК: сервер уступает ей процессор ----
+
+let gameActive = null;
+function javawPids() {
+  return new Promise((resolve) => {
+    require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq javaw.exe', '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 10000 }, (err, out) => {
+      if (err) return resolve([]);
+      const pids = [];
+      for (const line of String(out).split(/\r?\n/)) {
+        const m = /^"javaw\.exe","(\d+)"/i.exec(line);
+        if (m) pids.push(Number(m[1]));
+      }
+      resolve(pids);
+    });
+  });
+}
+async function gameTick() {
+  if (!child || process.platform !== 'win32') return;
+  const pid = child.pid;
+  // Клиент Minecraft (официальный лаунчер, TLauncher, Prism) работает в javaw.exe, сервер — в java.exe.
+  const active = prefs().gamePriority ? (await javawPids()).some((p) => p !== pid) : false;
+  if (!child || child.pid !== pid || active === gameActive) return;
+  const was = gameActive;
+  gameActive = active;
+  try {
+    os.setPriority(pid, active ? os.constants.priority.PRIORITY_BELOW_NORMAL : os.constants.priority.PRIORITY_NORMAL);
+  } catch {
+    return;
+  }
+  if (active) log('На этом компьютере открыта игра — сервер уступает ей процессор.');
+  else if (was) log('Игра закрыта — сервер снова работает в полную силу.');
+  send('game', { active });
+}
+setInterval(gameTick, 20000);
+
+// ---- расписание работы ----
+
+const powerPrev = new Map(); // сервер → был ли он «в окне» при прошлой проверке
+const powerWarned = new Set();
+
+function scheduledServers() {
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of dirs) {
+    const i = name.indexOf('-');
+    if (i < 1) continue;
+    const type = name.slice(0, i);
+    const version = name.slice(i + 1);
+    try {
+      core.checkArgs(type, version);
+    } catch {
+      continue;
+    }
+    const p = backup.readSettings(path.join(ROOT, name)).power;
+    if (p.enabled) out.push({ type, version, key: name, p });
+  }
+  return out;
+}
+
+/** С какими параметрами запускать сервер без участия человека: как в прошлый раз. */
+function startParams(type, version) {
+  const ui = readUi();
+  const s = (ui.starts || {})[`${type}-${version}`] || (ui.lastStart && ui.lastStart.type === type && ui.lastStart.version === version ? ui.lastStart : null);
+  return { ...(s || { type, version, ramGb: 2 }), eula: false };
+}
+
+function powerTick() {
+  const now = new Date();
+  for (const { type, version, key, p } of scheduledServers()) {
+    const inside = power.inWindow(p, now);
+    const prev = powerPrev.get(key);
+    powerPrev.set(key, inside);
+    const title = serverTitle(type, version);
+    const mine = isCurrent(type, version) && state === 'running';
+    if (inside && prev !== true && state === 'stopped' && !runner.has(key)) {
+      log(`Расписание: включаю «${title}» (${power.describe(p)}).`);
+      startServer(startParams(type, version)).catch((e) => log(`Запуск по расписанию не удался: ${e.message}`, 'error'));
+    }
+    if (inside && mine) {
+      for (const m of [5, 1]) {
+        const k = `${key}|${now.toDateString()}|${p.to}|${m}`;
+        if (power.inWindow(p, new Date(now.getTime() + m * 60000)) || powerWarned.has(k)) continue;
+        powerWarned.add(k);
+        runCmd(`say Сервер выключится по расписанию через ${m} ${m === 1 ? 'минуту' : 'минут'}`);
+        break;
+      }
+    }
+    if (!inside && prev === true && mine) {
+      log(`Расписание: выключаю «${title}».`);
+      tgNotify('start', `🌙 «${title}» выключается по расписанию.`);
+      stopServer();
+    }
+  }
+}
+setInterval(powerTick, 30000);
+setTimeout(powerTick, 10000);
+
+handle('power:get', ({ type, version }) => {
+  const p = backup.readSettings(serverDir(type, version)).power;
+  return { power: p, text: power.describe(p), inside: power.inWindow(p), autostart: prefs().autostart };
+});
+
+// ---- мир для одиночной игры ----
+
+handle('sp:export', async ({ type, version, name, mode }) => {
+  const dir = serverDir(type, version);
+  if (isCurrent(type, version) && state !== 'running' && state !== 'stopped') throw new Error('Дождитесь, пока сервер запустится или остановится');
+  const level = core.readProps(dir)['level-name'] || 'world';
+  const title = singleplayer.safeName(name || backup.readSettings(dir).name || serverTitle(type, version));
+  let file = null;
+  if (mode === 'zip') {
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Сохранить мир архивом',
+      defaultPath: path.join(app.getPath('desktop'), title + '.zip'),
+      filters: [{ name: 'Архив ZIP', extensions: ['zip'] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    file = r.filePath;
+  } else if (!fs.existsSync(path.dirname(savesDir()))) {
+    throw new Error('Не нашёл Minecraft на этом компьютере (папку .minecraft). Сохраните мир архивом и передайте его');
+  }
+  const running = isCurrent(type, version) && state === 'running';
+  if (running) {
+    runCmd('save-off');
+    runCmd('save-all flush');
+    await waitForLog(/Saved the game|Saved the world|All chunks are saved/i, 60000).catch(() => {});
+  }
+  try {
+    if (file) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcl-sp-'));
+      try {
+        const res = singleplayer.exportWorld(dir, level, path.join(tmp, title));
+        singleplayer.renameLevel(path.join(tmp, title, 'level.dat'), title);
+        fs.rmSync(file, { force: true });
+        const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        await new Promise((ok, bad) =>
+          require('child_process').execFile(tarExe, ['-a', '-cf', file, '-C', tmp, title], { windowsHide: true }, (e) => (e ? bad(new Error('Не удалось собрать архив')) : ok()))
+        );
+        shell.showItemInFolder(file);
+        return { ...res, file };
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+    const saves = savesDir();
+    fs.mkdirSync(saves, { recursive: true });
+    const folder = singleplayer.uniqueName(saves, title);
+    const res = singleplayer.exportWorld(dir, level, path.join(saves, folder));
+    singleplayer.renameLevel(path.join(saves, folder, 'level.dat'), folder);
+    return { ...res, folder };
+  } finally {
+    if (running) runCmd('save-on');
+  }
+});
+handle('sp:openSaves', () => {
+  const s = savesDir();
+  if (fs.existsSync(s)) shell.openPath(s);
+});
+
+// ---- Telegram ----
+
+const TG_FILE = () => path.join(app.getPath('userData'), 'telegram.json');
+const TG_EVENTS = { start: true, players: true, crash: true };
+const TG_HELP = 'Команды:\n/status — что с сервером\n/on — запустить\n/off — остановить\n/say текст — написать игрокам';
+let tgCode = null; // { code, until } — код привязки чата
+
+const tg = createTelegram({
+  fetchFn: (url, opts) => net.fetch(url, opts),
+  onMessage: tgMessage,
+  onFatal: (msg) => {
+    log(`Telegram: ${msg}`, 'error');
+    send('tg', tgInfo());
+  },
+});
+
+function tgRead() {
+  try {
+    return JSON.parse(fs.readFileSync(TG_FILE(), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+function tgWrite(patch) {
+  const next = { ...tgRead(), ...patch };
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(TG_FILE(), JSON.stringify(next), 'utf8');
+  return next;
+}
+function tgToken(c = tgRead()) {
+  if (!c.token) return '';
+  try {
+    return c.enc ? safeStorage.decryptString(Buffer.from(c.token, 'base64')) : c.token;
+  } catch {
+    return '';
+  }
+}
+function tgInfo() {
+  const c = tgRead();
+  return {
+    connected: !!c.token,
+    bot: c.bot || '',
+    chat: c.chatName || '',
+    linked: !!c.chatId,
+    events: { ...TG_EVENTS, ...(c.events || {}) },
+    control: !!c.control,
+    running: tg.running,
+    code: tgCode && tgCode.until > Date.now() ? tgCode.code : null,
+  };
+}
+function tgNotify(kind, text) {
+  const c = tgRead();
+  if (!c.chatId || !{ ...TG_EVENTS, ...(c.events || {}) }[kind]) return;
+  tg.send(c.chatId, text);
+}
+function tgBoot() {
+  const t = tgToken();
+  if (t) tg.start(t);
+}
+const tgNewCode = () => (tgCode = { code: String(require('crypto').randomInt(100000, 1000000)), until: Date.now() + 10 * 60000 });
+
+function tgStatus() {
+  if (!current || state === 'stopped') {
+    const last = readUi().lastStart;
+    return `🔴 Сервер выключен.${last ? `\nПоследний: «${serverTitle(last.type, last.version)}» — /on, чтобы запустить.` : ''}`;
+  }
+  const title = serverTitle(current.type, current.version);
+  if (state !== 'running') return `⏳ «${title}» ${state === 'stopping' ? 'останавливается' : 'запускается'}…`;
+  const min = Math.floor((Date.now() - startedAt) / 60000);
+  const up = min >= 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min} мин`;
+  const lines = [`🟢 «${title}» работает ${up}.`, `Игроки: ${online.size} из ${maxPlayers}${online.size ? ' — ' + [...online].join(', ') : ''}.`];
+  if (lastTps) lines.push(`Плавность: ${String(Math.round(lastTps.tps * 10) / 10).replace('.', ',')} TPS из 20.`);
+  return lines.join('\n');
+}
+
+async function tgMessage(m) {
+  const c = tgRead();
+  const chatId = m.chat && m.chat.id;
+  const cmd = parseCommand(m.text);
+  if (!cmd || !chatId) return;
+  if (!c.chatId) {
+    // Привязка: только по коду, который виден в лаунчере.
+    if (cmd.cmd === 'start' && tgCode && tgCode.until > Date.now() && cmd.arg === tgCode.code) {
+      tgCode = null;
+      const name = m.chat.title || [m.chat.first_name, m.chat.last_name].filter(Boolean).join(' ') || m.chat.username || 'чат';
+      tgWrite({ chatId, chatName: name });
+      await tg.send(chatId, `Готово: лаунчер привязан к этому чату.\n\n${TG_HELP}`);
+      send('tg', tgInfo());
+    }
+    return;
+  }
+  if (chatId !== c.chatId) return; // чужие чаты молча пропускаем
+  if (['start', 'help'].includes(cmd.cmd)) return tg.send(chatId, TG_HELP);
+  if (cmd.cmd === 'status') return tg.send(chatId, tgStatus());
+  if (!['on', 'off', 'say'].includes(cmd.cmd)) return tg.send(chatId, TG_HELP);
+  if (!c.control) return tg.send(chatId, 'Управление из Telegram выключено. Включить: лаунчер → «Настройки» → «Telegram».');
+  if (cmd.cmd === 'on') {
+    if (state !== 'stopped') return tg.send(chatId, 'Сервер уже работает или запускается.');
+    const last = readUi().lastStart;
+    if (!last) return tg.send(chatId, 'Сначала запустите сервер хотя бы раз в лаунчере.');
+    await tg.send(chatId, `Запускаю «${serverTitle(last.type, last.version)}»…`);
+    return startServer({ ...last, eula: false }).catch((e) => tg.send(chatId, `Не запустился: ${e.message}`));
+  }
+  if (cmd.cmd === 'off') {
+    if (!child) return tg.send(chatId, 'Сервер и так выключен.');
+    runCmd('say Сервер выключается по команде администратора');
+    stopServer();
+    return tg.send(chatId, 'Останавливаю сервер…');
+  }
+  if (!child || state !== 'running') return tg.send(chatId, 'Сервер не запущен.');
+  if (!cmd.arg) return tg.send(chatId, 'Напишите текст после команды: /say Всем привет');
+  runCmd(chat.tellraw('@a', cmd.arg));
+  addChat({ name: null, text: cmd.arg.slice(0, 240), at: Date.now(), own: true, via: 'telegram' });
+  return tg.send(chatId, 'Отправлено.');
+}
+
+handle('tg:get', () => tgInfo());
+handle('tg:connect', async ({ token }) => {
+  const t = String(token || '').trim();
+  if (!t) {
+    // Уже подключён — только новый код привязки.
+    if (!tgToken()) throw new Error('Вставьте токен бота');
+    tgNewCode();
+    return tgInfo();
+  }
+  const me = await tg.me(t);
+  const enc = safeStorage.isEncryptionAvailable();
+  tgWrite({ token: enc ? safeStorage.encryptString(t).toString('base64') : t, enc, bot: me.username, chatId: null, chatName: '' });
+  tgNewCode();
+  tg.start(t);
+  return tgInfo();
+});
+handle('tg:set', ({ events, control }) => {
+  const e = events || {};
+  tgWrite({ events: { start: !!e.start, players: !!e.players, crash: !!e.crash }, control: !!control });
+  return tgInfo();
+});
+handle('tg:test', async () => {
+  const c = tgRead();
+  if (!c.chatId) throw new Error('Сначала привяжите чат');
+  if (!tg.running) throw new Error('Бот не работает — подключите его заново');
+  await tg.send(c.chatId, `✅ Проверка: лаунчер на связи.\n\n${tgStatus()}`);
+});
+handle('tg:disconnect', () => {
+  tg.stop();
+  tgCode = null;
+  fs.rmSync(TG_FILE(), { force: true });
+  return tgInfo();
+});
+handle('tg:openBot', () => {
+  const c = tgRead();
+  if (!/^\w{3,40}$/.test(c.bot || '')) return;
+  const code = tgCode && tgCode.until > Date.now() ? tgCode.code : '';
+  shell.openExternal(`https://t.me/${c.bot}${code ? `?start=${code}` : ''}`);
+});
+app.on('will-quit', () => tg.stop());
+
 // ---- оформление: светлая, тёмная или как в Windows ----
 
 const UI_FILE = () => path.join(app.getPath('userData'), 'ui.json');
@@ -2115,7 +2485,7 @@ function createWindow(hidden = false) {
     minHeight: 580,
     backgroundColor: themeBackground(),
     autoHideMenuBar: true,
-    title: 'Лаунчер сервера Minecraft',
+    title: 'Блокхост — сервер Minecraft',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -2157,6 +2527,7 @@ if (!app.requestSingleInstanceLock()) {
     autoStartServer();
     if (readUi().remote) remote.enable(8765).catch((e) => log(`Управление с телефона не включилось: ${e.message}`, 'error'));
     updater.init(send);
+    tgBoot();
   });
 }
 

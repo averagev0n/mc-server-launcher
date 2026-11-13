@@ -2,15 +2,15 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src https://cdn.modrinth.com https://mc-heads.net">
-  <title>Лаунчер сервера Minecraft</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net">
+  <title>Блокхост — сервер Minecraft</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="side">
     <header class="brand">
-      <div class="cube" aria-hidden="true"></div>
-      <b>Сервер Minecraft</b>
+      <img class="logo" src="../build/icon.png" alt="">
+      <b>Блокхост</b>
     </header>
 
     <div class="side-group" id="srv-group">Ваши серверы</div>
@@ -192,6 +192,7 @@
       <div class="topbar">
         <div class="tabs" role="tablist">
           <button type="button" class="tab" role="tab" id="tab-console" data-tab="console">Консоль</button>
+          <button type="button" class="tab" role="tab" id="tab-chat" data-tab="chat">Чат</button>
           <button type="button" class="tab" role="tab" id="tab-players" data-tab="players">Игроки</button>
           <button type="button" class="tab" role="tab" id="tab-mods" data-tab="mods">Моды</button>
           <button type="button" class="tab" role="tab" id="tab-configs" data-tab="configs">Конфиги</button>
@@ -236,6 +237,16 @@
         <datalist id="cmd-list"></datalist>
         <button type="submit" id="send" class="btn primary" disabled>Отправить</button>
         <button type="button" id="clear" class="btn">Очистить</button>
+      </form>
+    </section>
+
+<section id="view-chat" class="view" role="tabpanel" aria-labelledby="tab-chat" hidden>
+      <div id="chat-log" class="log chat-log" role="log" aria-live="polite"></div>
+      <p class="hint" id="chat-hint"></p>
+      <form id="chat-form" class="cmd">
+        <select id="chat-to" aria-label="Кому"><option value="@a">Всем</option></select>
+        <input type="text" id="chat-text" placeholder="Сообщение игрокам" autocomplete="off" maxlength="240" disabled>
+        <button type="submit" id="chat-send" class="btn primary" disabled>Отправить</button>
       </form>
     </section>
 
@@ -486,6 +497,35 @@
           </div>
           <label class="check"><input type="checkbox" id="rs-crash"><span>Перезапускать сервер, если он упал во время игры (не больше 3 раз за полчаса)</span></label>
           <p class="hint" id="mt-hint"></p>
+        </section>
+        <section class="card" id="ua-card">
+          <div class="row-between">
+            <h2>Обновления модов и плагинов</h2>
+            <div class="row">
+              <button type="button" id="ua-check" class="btn small">Проверить</button>
+              <button type="button" id="ua-run" class="btn small primary" hidden>Обновить всё</button>
+            </div>
+          </div>
+          <ul id="ua-list" class="ua-list"></ul>
+          <p class="hint" id="ua-hint">Проверяет всё сразу: и моды, и плагины. Старые файлы остаются в папке backups сервера.</p>
+        </section>
+        <section class="card">
+          <div class="row-between">
+            <h2>Нагрузка за неделю</h2>
+            <button type="button" id="wk-refresh" class="btn small">Обновить</button>
+          </div>
+          <canvas id="wk-chart" class="week-chart" role="img" aria-label="Игроки, плавность и память сервера за неделю"></canvas>
+          <p class="hint" id="wk-hint"></p>
+        </section>
+        <section class="card">
+          <h2>Мир для одиночной игры</h2>
+          <p class="hint" id="sp-about">Копия мира сервера, в которую можно играть без сервера. Сам сервер не меняется. Вещи игроков не переносятся — вы появитесь на точке возрождения.</p>
+          <label class="field"><span>Название мира</span><input type="text" id="sp-name" maxlength="60" autocomplete="off"></label>
+          <div class="row">
+            <button type="button" id="sp-saves" class="btn primary">Добавить в игру на этом ПК</button>
+            <button type="button" id="sp-zip" class="btn">Сохранить архивом .zip</button>
+          </div>
+          <p class="hint" id="sp-hint"></p>
         </section>
       </div>
     </section>
@@ -807,6 +847,57 @@
         </section>
 
         <section class="card">
+          <h2>Расписание работы</h2>
+          <label class="check"><input type="checkbox" id="pw-on"><span>Включать и выключать сервер по расписанию</span></label>
+          <div class="row pw-times">
+            <label class="field"><span>Включать в</span><input type="time" id="pw-from"></label>
+            <label class="field"><span>Выключать в</span><input type="time" id="pw-to"></label>
+          </div>
+          <div class="checks" id="pw-days"></div>
+          <div class="row">
+            <button type="button" id="pw-save" class="btn">Сохранить</button>
+          </div>
+          <p class="hint" id="pw-hint"></p>
+        </section>
+
+        <section class="card" id="tg-card">
+          <h2>Telegram-бот</h2>
+          <p class="hint">Бот пишет, когда сервер запустился, упал и кто зашёл, а по команде показывает состояние, запускает и останавливает сервер. Работает, пока открыт лаунчер.</p>
+          <div id="tg-setup" class="tg-step">
+            <ol class="steps-list">
+              <li>В Telegram откройте <b>@BotFather</b>, отправьте /newbot и придумайте боту имя.</li>
+              <li>Скопируйте токен, который он пришлёт, и вставьте сюда.</li>
+            </ol>
+            <label class="field"><span>Токен бота</span><input type="password" id="tg-token" autocomplete="off" spellcheck="false" placeholder="123456789:AA…"></label>
+            <div class="row"><button type="button" id="tg-connect" class="btn primary">Подключить</button></div>
+          </div>
+          <div id="tg-link" class="tg-step" hidden>
+            <p id="tg-link-text"></p>
+            <div class="row">
+              <button type="button" id="tg-open" class="btn primary">Открыть бота</button>
+              <button type="button" id="tg-newcode" class="btn">Новый код</button>
+              <button type="button" id="tg-cancel" class="btn">Отключить</button>
+            </div>
+          </div>
+          <div id="tg-ready" class="tg-step" hidden>
+            <p id="tg-who"></p>
+            <span class="sub-label">Присылать</span>
+            <div class="checks">
+              <label class="check"><input type="checkbox" id="tg-start"><span>Запуск и остановка</span></label>
+              <label class="check"><input type="checkbox" id="tg-players"><span>Кто зашёл и вышел</span></label>
+              <label class="check"><input type="checkbox" id="tg-crash"><span>Сервер упал</span></label>
+            </div>
+            <label class="check"><input type="checkbox" id="tg-control"><span>Разрешить управление командами /on, /off и /say (только из этого чата)</span></label>
+            <div class="row">
+              <button type="button" id="tg-save" class="btn">Сохранить</button>
+              <button type="button" id="tg-test" class="btn">Отправить проверку</button>
+              <button type="button" id="tg-off" class="btn">Отключить бота</button>
+            </div>
+          </div>
+          <p class="hint" id="tg-hint"></p>
+        </section>
+
+        <section class="card">
           <h2>Сообщения в Discord</h2>
           <p class="hint">В настройках канала Discord: «Интеграция» → «Вебхуки» → «Новый вебхук» → «Копировать URL вебхука». Вставьте адрес сюда.</p>
           <label class="field"><span>Адрес вебхука</span><input type="text" id="dc-url" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false"></label>
@@ -838,6 +929,7 @@
           <label class="check"><input type="checkbox" id="pf-tray"><span>Если закрыть окно, пока сервер работает, — сворачивать в трей (сервер продолжит работать)</span></label>
           <label class="check"><input type="checkbox" id="pf-autostart"><span>Запускать лаунчер вместе с Windows (свёрнутым в трей)</span></label>
           <label class="check"><input type="checkbox" id="pf-autoserver"><span>Сразу запускать последний сервер, когда открывается лаунчер</span></label>
+          <label class="check"><input type="checkbox" id="pf-game"><span>Когда на этом ПК открыт Minecraft, сервер уступает игре процессор — меньше лагов у вас, сервер работает чуть медленнее</span></label>
           <span class="sub-label">Уведомления Windows</span>
           <div class="checks">
             <label class="check"><input type="checkbox" id="pf-started"><span>Сервер готов</span></label>
@@ -955,6 +1047,7 @@
   <script src="js/96-more.js"></script>
   <script src="js/97-tools.js"></script>
   <script src="js/98-multi.js"></script>
+  <script src="js/98-life.js"></script>
   <script src="js/99-start.js"></script>
 </body>
 </html>

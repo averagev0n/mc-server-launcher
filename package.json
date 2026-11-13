@@ -17,7 +17,8 @@
   },
   "build": {
     "appId": "local.mcserverlauncher",
-    "productName": "MC Server Launcher",
+    "productName": "Блокхост",
+    "executableName": "MC Server Launcher",
     "npmRebuild": false,
     "directories": {
       "output": "dist",
@@ -62,7 +63,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Сервер Minecraft",
+      "shortcutName": "Блокхост",
       "artifactName": "MC-Server-Launcher-Setup.${ext}"
     },
     "portable": {
