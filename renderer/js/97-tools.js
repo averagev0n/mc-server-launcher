@@ -242,6 +242,14 @@ async function openLog(it, b) {
     $('lg-text').textContent = e.message;
   }
 }
+$('lg-report').addEventListener('click', async () => {
+  try {
+    const r = await api.call('bugreport:save', selected());
+    if (r) setHint('lg-hint', `Отчёт сохранён: ${r.file}. Внутри: ${r.files.join(', ')}. Отправьте этот файл тому, кто помогает разобраться с ошибкой.`, 'good');
+  } catch (e) {
+    setHint('lg-hint', e.message, 'bad');
+  }
+});
 $('lg-clean').addEventListener('click', async () => {
   const days = Number($('cl-days').value);
   if (!window.confirm(`Удалить журналы и отчёты о сбоях старше ${days} дней?`)) return;
@@ -359,7 +367,10 @@ function showIcon(src) {
 $('ic-pick').addEventListener('click', async () => {
   try {
     const src = await api.call('icon:pick', selected());
-    if (src) showIcon(src);
+    if (src) {
+      showIcon(src);
+      refreshServers();
+    }
   } catch (e) {
     setHint('srv-hint', e.message, 'bad');
   }
@@ -367,6 +378,7 @@ $('ic-pick').addEventListener('click', async () => {
 $('ic-remove').addEventListener('click', async () => {
   await api.call('icon:remove', selected()).catch(fail);
   showIcon(null);
+  refreshServers();
 });
 
 // ---- цветное описание ----

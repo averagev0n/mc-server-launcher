@@ -204,6 +204,56 @@ api.on('lag', (l) => {
   if (tab === 'maint') renderLag(l);
 });
 
+// ---- подробный разбор (spark) ----
+
+let spk = null;
+async function renderSpark() {
+  $('spk-box').hidden = type === 'vanilla';
+  if (type === 'vanilla') return;
+  try {
+    spk = await api.call('spark:get', selected());
+  } catch {
+    spk = null;
+  }
+  showSpark();
+}
+function showSpark(msg, cls) {
+  const s = spk || {};
+  $('spk-install').hidden = !!s.installed;
+  $('spk-run').hidden = !s.installed;
+  $('spk-run').disabled = !!s.running;
+  $('spk-open').hidden = !s.last;
+  if (msg !== undefined) return setHint('spk-hint', msg, cls);
+  if (s.running) setHint('spk-hint', 'Идёт замер — около полуминуты, потом spark загрузит отчёт…');
+  else if (s.last) setHint('spk-hint', `Отчёт от ${hhmm(s.last.at)} готов.`, 'good');
+  else if (!s.installed) setHint('spk-hint', 'spark ещё не установлен на этот сервер.');
+  else if (s.builtin) setHint('spk-hint', 'spark уже встроен в Paper — ставить ничего не нужно.');
+  else setHint('spk-hint', isSelectedRunning() && state === 'running' ? '' : 'Разбор идёт на работающем сервере — сначала запустите его.');
+}
+$('spk-install').addEventListener('click', async () => {
+  showSpark('Устанавливаю spark…');
+  try {
+    await api.call('mods:install', { ...selected(), projectId: 'spark', bySlug: true, kind: type === 'paper' || isHybrid() ? 'plugin' : 'mod', loader: isModded() ? $('loader').value : null });
+    await renderSpark();
+    showSpark(isSelectedRunning() ? 'Установлен — перезапустите сервер, чтобы spark заработал.' : 'Установлен.', 'good');
+  } catch (e) {
+    showSpark(e.message, 'bad');
+  }
+});
+$('spk-run').addEventListener('click', async () => {
+  try {
+    await api.call('spark:profile', { seconds: 30 });
+  } catch (e) {
+    showSpark(e.message, 'bad');
+  }
+});
+$('spk-open').addEventListener('click', () => spk && spk.last && api.call('spark:open', { url: spk.last.url }).catch(fail));
+api.on('spark', (s) => {
+  if (!s.server || s.server.type !== type || s.server.version !== $('version').value) return;
+  spk = { ...(spk || {}), running: s.running, ...(s.last ? { last: s.last } : {}) };
+  if (tab === 'maint') showSpark(s.error, s.error ? 'bad' : undefined);
+});
+
 // ---- новая версия Minecraft ----
 
 async function loadMcNew(key) {
@@ -336,6 +386,7 @@ loadMaint = async function () {
     if (mtData && mtData.backups.length) setHint('rg-hint', '');
   }
   renderLag(await api.call('lag:get').catch(() => null));
+  renderSpark();
   loadMcNew(key);
 };
 

@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' https://cdn.modrinth.com https://mc-heads.net">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: https://cdn.modrinth.com https://mc-heads.net">
   <title>Блокхост — сервер Minecraft</title>
   <link rel="stylesheet" href="style.css">
   <script src="i18n-en.js"></script>
@@ -15,6 +15,7 @@
       <b>Блокхост</b>
     </header>
 
+    <button type="button" id="srv-home" class="srv-row srv-home"><span class="home-ico" aria-hidden="true"></span>Мои миры</button>
     <div class="side-group" id="srv-group">Ваши серверы</div>
     <nav id="srv-list" class="srv-list" aria-label="Ваши серверы"></nav>
     <button type="button" id="srv-new" class="srv-row srv-new"><span class="plus" aria-hidden="true">+</span>Новый сервер</button>
@@ -57,6 +58,19 @@
       </div>
       <div id="update-notes" class="update-notes" hidden></div>
     </div>
+
+    <!-- Мои миры: все серверы карточками с картой мира -->
+    <section id="home" class="home" hidden aria-labelledby="home-title">
+      <div class="home-hello">
+        <div>
+          <h1 id="home-title">Мои миры</h1>
+          <p id="home-sub"></p>
+        </div>
+        <button type="button" id="home-new" class="btn primary big">+ Новый мир</button>
+      </div>
+      <div id="home-hero"></div>
+      <div id="home-grid" class="home-grid"></div>
+    </section>
 
     <!-- Мастер создания сервера -->
     <section id="wizard" class="wizard" hidden aria-labelledby="wz-title">
@@ -183,7 +197,7 @@
     <section id="server" class="server">
       <header class="srv-head">
         <div class="srv-title">
-          <h1 id="srv-name"></h1>
+          <div class="srv-title-row"><img id="srv-head-icon" class="srv-head-icon" alt="" hidden><h1 id="srv-name"></h1></div>
           <div class="srv-sub">
             <span id="status" class="status" data-state="stopped">Остановлен</span>
             <span id="srv-meta" class="meta"></span>
@@ -571,7 +585,10 @@
         <section class="card">
           <div class="row-between">
             <h2>Журналы и отчёты о сбоях</h2>
-            <button type="button" id="lg-clean" class="btn small">Удалить старые</button>
+            <div class="row">
+              <button type="button" id="lg-report" class="btn small" title="Журнал, отчёты о сбоях, список модов и сведения о системе — одним архивом. Путь к папке пользователя, имя пользователя и IP-адреса в нём скрыты.">Отчёт об ошибке</button>
+              <button type="button" id="lg-clean" class="btn small">Удалить старые</button>
+            </div>
           </div>
           <label class="check"><input type="checkbox" id="cl-on"><span>Удалять журналы и отчёты старше</span>
             <select id="cl-days" class="inline-select" aria-label="Сколько дней хранить">
@@ -670,6 +687,16 @@
           </div>
           <ul id="lag-list" class="lag-list"></ul>
           <p class="hint" id="lag-hint">Лаунчер посчитает существ и предметы около каждого игрока и подскажет, что нагружает сервер. Если сервер тормозит дольше полуминуты, лаунчер проверит это сам.</p>
+          <div id="spk-box" class="subcard" hidden>
+            <h3>Подробный разбор (spark)</h3>
+            <p class="hint">spark 30 секунд следит за работающим сервером и показывает, какие моды, плагины и механизмы тратят больше всего времени. Отчёт загружается на сайт spark.lucko.me и открывается в браузере.</p>
+            <div class="row">
+              <button type="button" id="spk-install" class="btn small" hidden>Установить spark</button>
+              <button type="button" id="spk-run" class="btn small">Запустить разбор</button>
+              <button type="button" id="spk-open" class="btn small primary" hidden>Открыть отчёт</button>
+            </div>
+            <p class="hint" id="spk-hint"></p>
+          </div>
         </section>
         <section class="card" id="mcn-card" hidden>
           <div class="row-between">
@@ -858,7 +885,7 @@
             <img id="ic-img" class="srv-icon" alt="" hidden>
             <div class="srv-icon empty" id="ic-empty">64×64</div>
             <div class="stack">
-              <span class="sub-label">Значок в списке серверов у игроков</span>
+              <span class="sub-label">Значок сервера — в списке слева и в списке серверов у игроков</span>
               <div class="row">
                 <button type="button" id="ic-pick" class="btn small">Выбрать картинку…</button>
                 <button type="button" id="ic-remove" class="btn small" hidden>Убрать</button>
@@ -1077,6 +1104,26 @@
           <label class="field"><span>Адрес туннеля</span><input type="text" id="tn-addr" placeholder="например: castle-river.joinmc.link" autocomplete="off" spellcheck="false"></label>
           <label class="check"><input type="checkbox" id="tn-auto"><span>Запускать туннель вместе с сервером</span></label>
           <p class="hint" id="tn-hint"></p>
+        </section>
+
+        <section class="card" id="vc-card" hidden>
+          <h2>Голосовой чат</h2>
+          <p class="hint">Simple Voice Chat — игроки слышат друг друга в игре, громче вблизи и тише вдали. Голос идёт по отдельному UDP-порту, и его тоже нужно сделать доступным из интернета. Каждому игроку нужен мод Simple Voice Chat в игре.</p>
+          <div class="row">
+            <button type="button" id="vc-install" class="btn">Установить Simple Voice Chat</button>
+          </div>
+          <div id="vc-setup" class="stack" hidden>
+            <ul class="steps-list">
+              <li><strong>С белым IP:</strong> включите «Открывать порт на роутере автоматически» выше — лаунчер откроет и UDP-порт голосового чата.</li>
+              <li><strong>Через playit.gg:</strong> на сайте playit добавьте ещё один туннель, тип <b>UDP</b>, локальный порт — <b id="vc-port-b">24454</b>. Адрес этого туннеля вставьте в поле ниже.</li>
+            </ul>
+            <div class="row">
+              <label class="field"><span>UDP-порт голосового чата</span><input type="number" id="vc-port" min="1024" max="65535" step="1"></label>
+              <label class="field grow"><span>Адрес голосового чата для игроков (если через playit)</span><input type="text" id="vc-host" placeholder="например: 147.185.221.1:12345" autocomplete="off" spellcheck="false"></label>
+            </div>
+            <div class="row"><button type="button" id="vc-save" class="btn">Сохранить</button></div>
+          </div>
+          <p class="hint" id="vc-hint"></p>
         </section>
 
         <section class="card">
@@ -1304,6 +1351,7 @@
   <script src="js/70-data.js"></script>
   <script src="js/80-events.js"></script>
   <script src="js/90-shell.js"></script>
+  <script src="js/91-home.js"></script>
   <script src="js/95-extras.js"></script>
   <script src="js/96-more.js"></script>
   <script src="js/97-tools.js"></script>

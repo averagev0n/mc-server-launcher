@@ -34,4 +34,6 @@
   if (running && !pick) await selectServer(running.type, running.version);
   else if (pick) await selectServer(pick.type, pick.version);
   else openWizard();
+  // Первый экран — «Мои миры»; выбранный сервер уже загружен и откроется из карточки сразу.
+  if (servers.length && mode === 'server') openHome();
 })();

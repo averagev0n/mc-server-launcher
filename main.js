@@ -29,6 +29,8 @@ const modcheck = require('./lib/modcheck');
 const logsLib = require('./lib/logs');
 const disk = require('./lib/disk');
 const jvm = require('./lib/jvm');
+const bugreport = require('./lib/bugreport');
+const voicechat = require('./lib/voicechat');
 const { createRemote } = require('./lib/remote');
 const tar = require('tar');
 const { createRunner, freePort } = require('./lib/runner');
@@ -83,7 +85,12 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
   widgetSend(channel, payload);
 }
-const log = (text, kind = 'info') => send('log', { text, kind });
+const launcherLines = []; // последние сообщения лаунчера — для отчёта об ошибке
+const log = (text, kind = 'info') => {
+  launcherLines.push(`[${new Date().toTimeString().slice(0, 8)}]${kind === 'error' ? ' !' : ''} ${text}`);
+  if (launcherLines.length > 400) launcherLines.shift();
+  send('log', { text, kind });
+};
 function setState(next) {
   const was = state;
   state = next;
@@ -140,6 +147,14 @@ async function chooseJava(type, version, javaPath) {
   const j = core.pickJava(javas, need, isModded(type));
   if (!j) throw new Error(`Версии ${version} нужна Java ${need} или новее — установите её`);
   return j;
+}
+
+/** Флаги Aikar, которые принимает эта Java; про отброшенные — строка в консоли. */
+async function safeAikar(java, ram) {
+  const r = await jvm.checkFlags(java.path, jvm.aikarFlags(ram));
+  if (r.failed) log(`${java.text} не запускается с флагами Aikar — запускаю без них.`, 'error');
+  else if (r.dropped.length) log(`${java.text} не знает флаги ${r.dropped.join(' ')} — запускаю без них.`, 'error');
+  return r.flags;
 }
 
 async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
@@ -237,13 +252,14 @@ async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
     if (c.files) log(`Автоочистка: удалено старых журналов и отчётов — ${c.files} (${fmtSize(c.bytes)}).`);
   }
   const aikar = runSettings.jvm.aikar && java.bits !== 32 && ram >= 2;
+  const gcFlags = aikar ? await safeAikar(java, ram) : [];
   setState('starting');
   const what = `${type} ${version}${inst.loader && isModded(type) ? ' (загрузчик ' + inst.loader + ')' : ''}`;
   log(`Запускаю ${what}, память ${ram} ГБ, ${java.text}…`);
   const args = [
     `-Xms${Math.min(ram, 1)}G`,
     `-Xmx${java.bits === 32 ? 1 : ram}G`,
-    ...(aikar ? jvm.aikarFlags(ram) : []),
+    ...gcFlags,
     '-Djava.net.useSystemProxies=true',
     '-Dfile.encoding=UTF-8',
     '-Dstdout.encoding=UTF-8',
@@ -415,6 +431,7 @@ function addLogLine(line) {
   const said = chat.parseChat(line);
   if (said) addChat({ ...said, at: Date.now() });
   if (/chunky/i.test(line)) chunkyLine(line);
+  if (sparkJob) sparkLine(line);
   const ev = players.parseLine(line);
   if (ev) {
     if (ev.join && !online.has(ev.join)) onPlayer(ev.join, true);
@@ -801,6 +818,16 @@ async function openUpnp(port) {
     } else {
       log(`Порт ${port} открыт на роутере${r.externalIp ? ` — адрес для друзей из интернета: ${r.externalIp}${port === 25565 ? '' : ':' + port}` : ''}.`);
     }
+    const vc = current ? voicechat.read(serverDir(current.type, current.version), port) : null;
+    if (vc && vc.installed) {
+      try {
+        await upnp.openPort(vc.port, 'Minecraft voice chat (Blockhost)', 'UDP');
+        upnpState.voicePort = vc.port;
+        log(`UDP-порт ${vc.port} для голосового чата тоже открыт на роутере.`);
+      } catch (e) {
+        log(`Не удалось открыть на роутере UDP-порт ${vc.port} для голосового чата: ${e.message}.`, 'error');
+      }
+    }
     send('net', { upnp: upnpState });
     return upnpState;
   } catch (e) {
@@ -810,16 +837,18 @@ async function openUpnp(port) {
 }
 function closeUpnp() {
   if (!upnpState) return Promise.resolve();
-  const port = upnpState.port;
+  const { port, voicePort } = upnpState;
   upnpState = null;
   send('net', { upnp: null });
-  return Promise.race([upnp.closePort(port).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  const closing = Promise.all([upnp.closePort(port).catch(() => {}), voicePort ? upnp.closePort(voicePort, 'UDP').catch(() => {}) : null]);
+  return Promise.race([closing, new Promise((r) => setTimeout(r, 3000))]);
 }
 
 // ---- реакция на состояние ----
 
 function onState(next) {
   if (tray) trayMenu();
+  if (next === 'stopped' && sparkJob) sparkJob.done(new Error('Сервер остановился — разбор не закончен'));
   if (next === 'running' && current) {
     runningSince = Date.now();
     msgSent.clear();
@@ -1453,6 +1482,20 @@ handle('tunnel:setup', async () => {
   return { running: true };
 });
 handle('tunnel:stop', () => stopPlayit());
+
+// ---- голосовой чат (Simple Voice Chat) ----
+
+handle('voice:get', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  return voicechat.read(dir, core.readProps(dir)['server-port']);
+});
+handle('voice:set', ({ type, version, port, host }) => {
+  const dir = serverDir(type, version);
+  voicechat.write(dir, { port, host });
+  const used = Number(core.readProps(dir)['server-port']) || 25565;
+  const res = voicechat.read(dir, used);
+  return { ...res, restart: isCurrent(type, version) && state !== 'stopped' };
+});
 handle('tunnel:set', ({ type, version, address, auto }) => backup.writeSettings(serverDir(type, version), { tunnel: { address, auto } }).tunnel);
 
 // ---- проверка модов перед запуском ----
@@ -1482,6 +1525,36 @@ handle('logs:read', ({ type, version, kind, name }) => {
   return { text: lines.slice(-4000).join('\n'), issues };
 });
 handle('logs:clean', ({ type, version, days }) => logsLib.clean(serverDir(type, version), Number(days) || 14));
+
+// ---- отчёт об ошибке ----
+
+handle('bugreport:save', async ({ type, version }) => {
+  const dir = serverDir(type, version);
+  if (!fs.existsSync(dir)) throw new Error('Папки сервера ещё нет — сначала запустите его');
+  const inst = core.readInstall(dir) || {};
+  const javas = await core.findJavas().catch(() => []);
+  const s = backup.readSettings(dir);
+  const last = readUi().lastStart || {};
+  const info = {
+    Лаунчер: `${app.getVersion()}${app.isPackaged ? '' : ' (из исходников)'}`,
+    Сервер: `${type} ${version}${inst.loader ? `, загрузчик ${inst.loader}` : ''}`,
+    'Память серверу': last.type === type && last.version === version ? `${last.ramGb} ГБ` : '?',
+    'Флаги Aikar': s.jvm.aikar ? 'включены' : 'выключены',
+    'Найденная Java': javas.map((j) => j.text || j.path).join('; ') || 'нет',
+    'Сейчас запущен': current && current.type === type && current.version === version ? state : 'нет',
+  };
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Сохранить отчёт об ошибке',
+    defaultPath: path.join(app.getPath('desktop'), `blockhost-report-${type}-${version}-${stamp}.zip`),
+    filters: [{ name: 'Архив ZIP', extensions: ['zip'] }],
+  });
+  if (r.canceled || !r.filePath) return null;
+  const rep = bugreport.build(dir, info, { extra: [{ name: 'launcher.log', text: launcherLines.join('\n') + '\n' }] });
+  fs.writeFileSync(r.filePath, rep.data);
+  shell.showItemInFolder(r.filePath);
+  return { file: r.filePath, files: rep.files };
+});
 
 // ---- место на диске ----
 
@@ -1604,10 +1677,16 @@ handle('pack:resourceGet', ({ type, version }) => {
 
 // ---- значок сервера ----
 
-handle('icon:get', ({ type, version }) => {
-  const p = path.join(serverDir(type, version), 'server-icon.png');
-  return fs.existsSync(p) ? 'data:image/png;base64,' + fs.readFileSync(p).toString('base64') : null;
-});
+/** server-icon.png как data:-ссылка (файл 64×64, несколько КБ) — или null. */
+function iconData(dir) {
+  try {
+    const buf = fs.readFileSync(path.join(dir, 'server-icon.png'));
+    return buf.length < 512 * 1024 ? 'data:image/png;base64,' + buf.toString('base64') : null;
+  } catch {
+    return null;
+  }
+}
+handle('icon:get', ({ type, version }) => iconData(serverDir(type, version)));
 handle('icon:pick', async ({ type, version }) => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Картинка для значка сервера',
@@ -1843,7 +1922,7 @@ async function bgStart({ type, version, ramGb, javaPath }) {
   const args = [
     `-Xms${Math.min(ram, 1)}G`,
     `-Xmx${java.bits === 32 ? 1 : ram}G`,
-    ...(s.jvm.aikar && java.bits !== 32 && ram >= 2 ? jvm.aikarFlags(ram) : []),
+    ...(s.jvm.aikar && java.bits !== 32 && ram >= 2 ? await safeAikar(java, ram) : []),
     '-Djava.net.useSystemProxies=true',
     '-Dfile.encoding=UTF-8',
     '-Dstdout.encoding=UTF-8',
@@ -2528,6 +2607,68 @@ handle('lag:fix', ({ fix }) => {
   log(fix === 'items' ? 'Предметы с земли убраны.' : 'Сферы опыта убраны.');
 });
 
+// ---- подробный разбор лагов (spark) ----
+// spark полминуты замеряет, на что уходит время сервера, и выкладывает отчёт на spark.lucko.me.
+
+let sparkJob = null; // { at, done(err, url) }
+let lastSpark = null; // { at, url, server }
+
+function sparkInfo(type, version) {
+  const dir = serverDir(type, version);
+  const jar = ['mods', 'plugins'].some((sub) => {
+    try {
+      return fs.readdirSync(path.join(dir, sub)).some((f) => /^spark[-_ ].*\.jar$/i.test(f) || /^spark\.jar$/i.test(f));
+    } catch {
+      return false;
+    }
+  });
+  const builtin = lag.sparkBuiltin(type, version);
+  return { installed: jar || builtin, builtin: builtin && !jar, supported: type !== 'vanilla' };
+}
+function sparkLine(line) {
+  const url = lag.sparkUrl(line);
+  if (url) return sparkJob.done(null, url);
+  const err = lag.sparkError(line, Date.now() - sparkJob.at);
+  if (err) sparkJob.done(new Error(err));
+}
+handle('spark:get', ({ type, version }) => ({
+  ...sparkInfo(type, version),
+  running: !!sparkJob,
+  last: lastSpark && lastSpark.server.type === type && lastSpark.server.version === version ? lastSpark : null,
+}));
+handle('spark:profile', async ({ seconds }) => {
+  if (!child || state !== 'running' || !current) throw new Error('Сервер не запущен');
+  if (sparkJob) throw new Error('Разбор уже идёт — подождите');
+  if (!sparkInfo(current.type, current.version).installed) throw new Error('Сначала установите spark и перезапустите сервер');
+  const sec = Math.min(120, Math.max(10, Math.round(Number(seconds)) || 30));
+  const server = { ...current };
+  send('spark', { running: true, seconds: sec, server });
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const done = (err, u) => {
+        clearTimeout(timer);
+        sparkJob = null;
+        if (err) reject(err);
+        else resolve(u);
+      };
+      const timer = setTimeout(() => done(new Error('spark не прислал отчёт — посмотрите консоль сервера')), (sec + 90) * 1000);
+      sparkJob = { at: Date.now(), done };
+      runCmd(`spark profiler start --timeout ${sec}`);
+    });
+    lastSpark = { at: Date.now(), url, server };
+    log(`Отчёт spark готов: ${url}`);
+    send('spark', { running: false, last: lastSpark, server });
+    return lastSpark;
+  } catch (e) {
+    send('spark', { running: false, error: e.message, server });
+    throw e;
+  }
+});
+handle('spark:open', ({ url }) => {
+  if (!lag.sparkUrl(String(url)) || lag.sparkUrl(String(url)) !== url) throw new Error('Неверная ссылка на отчёт');
+  return shell.openExternal(url);
+});
+
 // ---- новая версия Minecraft ----
 
 const mcnewCache = new Map();
@@ -2920,7 +3061,10 @@ handle('map:tile', async ({ type, version, dim, rx, rz, scale }) => {
   } catch {
     return null;
   }
-  const key = `${file}|${st.mtimeMs}|${sc}`;
+  return renderRegion(file, st.mtimeMs, sc);
+});
+async function renderRegion(file, mtimeMs, sc) {
+  const key = `${file}|${mtimeMs}|${sc}`;
   if (mapCache.has(key)) return mapCache.get(key);
   const id = ++mapSeq;
   const res = await new Promise((resolve, reject) => {
@@ -2930,6 +3074,55 @@ handle('map:tile', async ({ type, version, dim, rx, rz, scale }) => {
   mapCache.set(key, res);
   if (mapCache.size > 300) mapCache.delete(mapCache.keys().next().value);
   return res;
+}
+
+// Карта мира для карточки на экране «Мои миры»: четыре области вокруг 0,0 (1024×1024 блока), 128×128 точек.
+const PREVIEW_TILES = [[-1, -1], [0, -1], [-1, 0], [0, 0]];
+const previewCache = new Map();
+handle('map:preview', async ({ type, version }) => {
+  const dir = serverDir(type, version);
+  const rd = mapDimDir(dir, 'overworld');
+  if (!rd) return null;
+  const stamps = PREVIEW_TILES.map(([x, z]) => {
+    try {
+      const st = fs.statSync(path.join(rd, `r.${x}.${z}.mca`));
+      return st.size > 8192 ? st.mtimeMs : 0;
+    } catch {
+      return 0;
+    }
+  });
+  if (!stamps.some(Boolean)) return null;
+  const key = `${dir}|${stamps.join(',')}`;
+  if (previewCache.has(key)) return previewCache.get(key);
+  const S = 64;
+  const W = S * 2;
+  const bgra = Buffer.alloc(W * W * 4);
+  for (let i = 0; i < PREVIEW_TILES.length; i++) {
+    if (!stamps[i]) continue;
+    const [x, z] = PREVIEW_TILES[i];
+    let t;
+    try {
+      t = await renderRegion(path.join(rd, `r.${x}.${z}.mca`), stamps[i], 8);
+    } catch {
+      continue;
+    }
+    const ox = (x + 1) * S;
+    const oz = (z + 1) * S;
+    for (let pz = 0; pz < t.size && pz < S; pz++) {
+      for (let px = 0; px < t.size && px < S; px++) {
+        const s = (pz * t.size + px) * 4;
+        const d = ((oz + pz) * W + ox + px) * 4;
+        bgra[d] = t.rgba[s + 2];
+        bgra[d + 1] = t.rgba[s + 1];
+        bgra[d + 2] = t.rgba[s];
+        bgra[d + 3] = t.rgba[s + 3];
+      }
+    }
+  }
+  const url = nativeImage.createFromBitmap(bgra, { width: W, height: W }).toDataURL();
+  for (const k of previewCache.keys()) if (k.startsWith(dir + '|')) previewCache.delete(k);
+  previewCache.set(key, url);
+  return url;
 });
 
 // ---- мини-окно ----
@@ -3330,6 +3523,10 @@ handle('servers:list', () => {
       installed,
       running: isCurrent(m[1], m[2]) && state !== 'stopped',
       lastPlayed,
+      icon: iconData(dir),
+      port: Number(core.readProps(dir)['server-port']) || 25565,
+      maxPlayers: Number(core.readProps(dir)['max-players']) || 20,
+      tunnel: backup.readSettings(dir).tunnel.address || '',
     });
   }
   return out.sort((a, b) => Number(b.running) - Number(a.running) || (b.lastPlayed || 0) - (a.lastPlayed || 0));

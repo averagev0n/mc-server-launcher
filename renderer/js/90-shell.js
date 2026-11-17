@@ -77,8 +77,20 @@ function renderServerList() {
       b.className = 'srv-row' + (st === 'running' ? ' on' : st !== 'stopped' ? ' busy' : '');
       const sel = cur && cur.type === s.type && cur.version === s.version;
       if (sel) b.setAttribute('aria-current', 'true');
+      // Значок: свой server-icon.png или первая буква названия; точка состояния — в углу значка.
+      const ico = document.createElement('span');
+      ico.className = 'srv-ico';
+      if (s.icon) {
+        const img = document.createElement('img');
+        img.src = s.icon;
+        img.alt = '';
+        ico.appendChild(img);
+      } else {
+        ico.textContent = (s.name || TYPE_SHORT[s.type] || s.type || '?').trim().charAt(0).toUpperCase();
+      }
       const dot = document.createElement('span');
       dot.className = 'srv-dot';
+      ico.appendChild(dot);
       const t = document.createElement('span');
       t.className = 't';
       const title = document.createElement('b');
@@ -93,7 +105,7 @@ function renderServerList() {
               ? `${TYPE_SHORT[s.type]} ${s.version} · ${lastPlayedText(s.lastPlayed).replace('Запускался ', '').replace('Ещё не запускался', 'не запускался')}`
               : lastPlayedText(s.lastPlayed);
       t.append(title, sub);
-      b.append(dot, t);
+      b.append(ico, t);
       b.addEventListener('click', () => {
         if (!sel) selectServer(s.type, s.version);
       });
@@ -263,6 +275,9 @@ async function createFromWizard() {
 function renderServerHead() {
   const v = $('version').value;
   $('srv-name').textContent = v ? serverTitle(type, v) : TYPE_SHORT[type] || '';
+  const icon = v && (findServer(type, v) || {}).icon;
+  $('srv-head-icon').hidden = !icon;
+  if (icon) $('srv-head-icon').src = icon;
   const loaderOpt = isModded() && $('loader').selectedOptions[0];
   $('srv-meta').textContent = v
     ? `${KIND_TEXT[type]} · Minecraft ${v}` + (loaderOpt && loaderOpt.value ? ` · ${loaderOpt.textContent}` : '')

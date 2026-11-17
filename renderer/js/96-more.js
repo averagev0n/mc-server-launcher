@@ -202,6 +202,52 @@ api.on('tunnel', (t) => {
   if (tab === 'settings') renderTunnel();
 });
 
+// ---- голосовой чат (Simple Voice Chat) ----
+
+let voice = null;
+function renderVoice() {
+  const v = voice || {};
+  $('vc-install').hidden = !!v.installed;
+  $('vc-setup').hidden = !v.installed;
+  if (!v.installed) return;
+  $('vc-port').value = v.rawPort === '-1' ? v.port : v.port || 24454;
+  $('vc-port-b').textContent = String(v.port || 24454);
+  $('vc-host').value = v.host || '';
+}
+async function loadVoice() {
+  $('vc-card').hidden = type === 'vanilla';
+  if (type === 'vanilla') return;
+  setHint('vc-hint', '');
+  try {
+    voice = await api.call('voice:get', selected());
+  } catch {
+    voice = null;
+  }
+  renderVoice();
+  if (voice && voice.installed && !voice.configured) setHint('vc-hint', 'Мод установлен. Файл настроек появится после первого запуска — или нажмите «Сохранить», и лаунчер создаст его сам.');
+}
+$('vc-install').addEventListener('click', async () => {
+  $('vc-install').disabled = true;
+  setHint('vc-hint', 'Устанавливаю Simple Voice Chat…');
+  try {
+    await api.call('mods:install', { ...selected(), projectId: 'simple-voice-chat', bySlug: true, kind: type === 'paper' || isHybrid() ? 'plugin' : 'mod', loader: isModded() ? $('loader').value : null });
+    await loadVoice();
+    setHint('vc-hint', isSelectedRunning() ? 'Установлен — перезапустите сервер, чтобы голосовой чат заработал.' : 'Установлен. Голосовой чат заработает при следующем запуске.', 'good');
+  } catch (e) {
+    setHint('vc-hint', e.message, 'bad');
+  }
+  $('vc-install').disabled = false;
+});
+$('vc-save').addEventListener('click', async () => {
+  try {
+    voice = await api.call('voice:set', { ...selected(), port: Number($('vc-port').value), host: $('vc-host').value.trim() });
+    renderVoice();
+    setHint('vc-hint', voice.restart ? 'Сохранено — перезапустите сервер, чтобы настройки применились.' : 'Сохранено.', 'good');
+  } catch (e) {
+    setHint('vc-hint', e.message, 'bad');
+  }
+});
+
 /** Вышла ли свежая сборка ядра (Paper, Fabric, Forge, NeoForge, гибриды). */
 async function checkBuild() {
   setHint('build-hint', '');
@@ -249,6 +295,7 @@ async function loadMore() {
   setHint('rules-hint', '');
   setHint('tn-hint', '');
   loadTunnel();
+  loadVoice();
   checkBuild();
 }
 const baseLoadSettingsExtras = loadSettingsExtras;
