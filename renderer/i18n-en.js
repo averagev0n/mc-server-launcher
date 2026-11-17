@@ -1696,8 +1696,8 @@
 "Сохранить архивом .zip":"Save as .zip",
 "+ Добавить VPS":"+ Add VPS",
 "Перенос сервера на VPS":"Move a server to a VPS",
-"Настройте сервер у себя, затем перенесите его на арендованный сервер с Linux (Ubuntu, Debian) — там он будет работать круглосуточно, даже когда компьютер выключен.":"Set up the server on your PC, then move it to a rented Linux server (Ubuntu, Debian) — there it runs around the clock, even when your PC is off.",
-"Понадобятся адрес VPS, имя пользователя и пароль или ключ SSH — их даёт хостинг.":"You'll need the VPS address, user name and password or SSH key — your hosting provides them.",
+"Настройте сервер у себя, затем перенесите его на арендованный сервер с Linux (Ubuntu, Debian) или Windows — там он будет работать круглосуточно, даже когда компьютер выключен.":"Set up the server on your PC, then move it to a rented Linux (Ubuntu, Debian) or Windows server — there it runs around the clock, even when your PC is off.",
+"Понадобятся адрес VPS, имя пользователя и пароль или ключ SSH — их даёт хостинг. На Windows должен работать OpenSSH-сервер, а пользователь — например Administrator.":"You'll need the VPS address, user name and password or SSH key — your hosting provides them. On Windows the OpenSSH server must be running, and the user is usually Administrator.",
 "Название (для себя)":"Name (for yourself)",
 "Адрес (IP или домен)":"Address (IP or domain)",
 "Пользователь":"User",
@@ -1956,7 +1956,12 @@
 "{0}. {1}":"{0}. {1}",
 "{0}: {1}":"{0}: {1}",
 "{0}, {1}":"{0}, {1}",
-"Перезапустите лаунчер, чтобы сменить язык.":"Restart the launcher to change the language."};
+"Перезапустите лаунчер, чтобы сменить язык.":"Restart the launcher to change the language.",
+"Не удалось определить систему VPS. Поддерживаются Linux и Windows (с OpenSSH-сервером и PowerShell)":"Couldn't detect the VPS operating system. Linux and Windows (with the OpenSSH server and PowerShell) are supported",
+"Не удалось записать скрипт на VPS: {0}":"Couldn't write the script to the VPS: {0}",
+"На этом VPS нет tar.exe — он есть в Windows 10 (1803 и новее) и Windows Server 2019 и новее. Обновите систему на VPS":"This VPS has no tar.exe — it comes with Windows 10 (1803 and newer) and Windows Server 2019 and newer. Update the system on the VPS",
+"VPS: {0}.":"VPS: {0}.",
+"Если игроки не смогут зайти, откройте порт {0} в брандмауэре Windows на VPS (PowerShell от администратора): New-NetFirewallRule -DisplayName \"Minecraft\" -Direction Inbound -Protocol TCP -LocalPort {1} -Action Allow":"If players can't join, open port {0} in the Windows firewall on the VPS (PowerShell as administrator): New-NetFirewallRule -DisplayName \"Minecraft\" -Direction Inbound -Protocol TCP -LocalPort {1} -Action Allow"};
   if (typeof module !== 'undefined' && module.exports) module.exports = EN;
   else root.I18N_EN = EN;
 })(this);

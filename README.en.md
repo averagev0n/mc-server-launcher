@@ -67,7 +67,7 @@ The interface language follows Windows; switch it at the bottom of the sidebar (
 **Remote control**
 - Telegram bot: notifications, commands and a weekly report. Discord notifications.
 - Control from your phone and a mini window on top of all windows.
-- Move the server to a Linux VPS over SSH and manage it there.
+- Move the server to a Linux or Windows VPS over SSH and manage it there.
 
 Servers are stored in `C:\Users\<name>\MinecraftServers`.
 
