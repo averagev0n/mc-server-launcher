@@ -88,7 +88,7 @@ startServer = async function () {
           await api.call('mods:checkRemove', { ...selected(), file: i.file }).catch(fail);
         }
       }
-      addLog(`Убрано модов: ${issues.length}. Они в корзине Windows — оттуда можно вернуть.`);
+      addLog(`Убрано модов: ${issues.length}. Они в корзине — оттуда можно вернуть.`);
       refreshInstalled();
     }
   }
@@ -497,6 +497,50 @@ async function offerAuth(fromHealth) {
 }
 $('p-online').addEventListener('change', () => {
   if (!$('p-online').checked) offerAuth(false);
+  renderSkins();
+});
+
+// ---- скины для игроков без лицензии ----
+
+function skinChoice() {
+  if (type === 'paper' || isHybrid()) return { slug: 'skinsrestorer', kind: 'plugin', name: 'SkinsRestorer', cmd: '/skin set ник_со_скином или /skin url ссылка_на_картинку' };
+  if (type === 'fabric' || type === 'neoforge') return { slug: 'skinsrestorer', kind: 'mod', name: 'SkinsRestorer', cmd: '/skin set ник_со_скином или /skin url ссылка_на_картинку' };
+  if (type === 'forge') return { slug: 'skinrestorer', kind: 'mod', name: 'Skin Restorer', cmd: '/skin set mojang ник_со_скином' };
+  return null;
+}
+const SKIN_RE = /skins?[-_ ]?restorer/i;
+async function renderSkins() {
+  const c = skinChoice();
+  if (!c || $('p-online').checked || !$('version').value) {
+    $('skin-box').hidden = true;
+    return;
+  }
+  let installed = false;
+  try {
+    const list = await api.call('mods:list', { ...selected(), kind: c.kind });
+    installed = list.some((x) => SKIN_RE.test(x.slug || x.file || x.title || ''));
+  } catch {
+    installed = false;
+  }
+  $('skin-box').hidden = false;
+  $('skin-install').hidden = installed;
+  if (installed) setHint('skin-hint', `${c.name} установлен. Скин ставится в чате: ${c.cmd}.`, 'good');
+  else setHint('skin-hint', '');
+}
+$('skin-install').addEventListener('click', async () => {
+  const c = skinChoice();
+  if (!c) return;
+  $('skin-install').disabled = true;
+  setHint('skin-hint', `Устанавливаю ${c.name}…`);
+  try {
+    await api.call('mods:install', { ...selected(), projectId: c.slug, bySlug: true, kind: c.kind, loader: isModded() ? $('loader').value : null });
+    await renderSkins();
+    setHint('skin-hint', `${c.name} установлен${isSelectedRunning() ? ' — перезапустите сервер, чтобы он заработал' : ''}. Скин ставится в чате: ${c.cmd}.`, 'good');
+    refreshInstalled();
+  } catch (e) {
+    setHint('skin-hint', `${c.name} не установился: ${e.message}`, 'bad');
+  }
+  $('skin-install').disabled = false;
 });
 
 // ---- сборки модов поиском ----

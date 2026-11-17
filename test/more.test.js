@@ -124,4 +124,8 @@ test('копии в облачную папку: копируются и чис�
   assert.throws(() => backup.mirror(dir, b.file, path.join(root, 'нет'), 2), /не найдена/);
   assert.throws(() => backup.writeSettings(dir, { backup: { mirror: 'relative/path' } }), /неверно/);
   assert.throws(() => backup.writeSettings(dir, { tunnel: { address: 'bad address!' } }), /туннеля/);
+  // Адреса playit бывают и с портом.
+  assert.equal(backup.writeSettings(dir, { tunnel: { address: '123.ply.gg:12345' } }).tunnel.address, '123.ply.gg:12345');
+  assert.equal(backup.writeSettings(dir, { tunnel: { address: 'Castle-River.joinmc.link' } }).tunnel.address, 'castle-river.joinmc.link');
+  assert.throws(() => backup.writeSettings(dir, { tunnel: { address: 'nodot' } }), /туннеля/);
 });

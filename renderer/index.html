@@ -27,7 +27,7 @@
         <div class="seg seg-full" role="radiogroup" aria-labelledby="theme-label">
           <button type="button" class="seg-btn" role="radio" data-theme="light">Светлая</button>
           <button type="button" class="seg-btn" role="radio" data-theme="dark">Тёмная</button>
-          <button type="button" class="seg-btn" role="radio" data-theme="system" title="Как в Windows">Авто</button>
+          <button type="button" class="seg-btn" role="radio" data-theme="system" title="Как в системе">Авто</button>
         </div>
       </div>
       <div class="theme no-tr">
@@ -747,6 +747,14 @@
           </div>
           <ul id="ua-list" class="ua-list"></ul>
           <p class="hint" id="ua-hint">Проверяет всё сразу: и моды, и плагины. Старые файлы остаются в папке backups сервера.</p>
+          <div class="subcard" id="au-box">
+            <h3>Обновлять самому, по ночам</h3>
+            <label class="check"><input type="checkbox" id="au-on"><span>Каждую ночь в</span>
+              <input type="time" id="au-time" class="inline-time" value="04:30" aria-label="Время обновления"><span>обновлять моды и плагины</span></label>
+            <p class="hint">Лаунчер сделает копию мира, поставит новые версии и пробно запустит сервер на временном мире. Если сервер не поднимется — вернёт прежние версии и напишет в Telegram, что пошло не так. Пока на сервере играют, обновление ждёт.</p>
+            <div class="row"><button type="button" id="au-run" class="btn small">Обновить и проверить сейчас</button></div>
+            <p class="hint" id="au-hint"></p>
+          </div>
         </section>
         <section class="card">
           <div class="row-between">
@@ -1051,6 +1059,11 @@
             <input type="checkbox" id="p-online">
             <span>Пускать только лицензионные аккаунты</span>
           </label>
+          <div id="skin-box" class="sub-box stack" hidden>
+            <span>Без лицензии игроки не видят скины друг друга — все выглядят как Стив и Алекс. Лаунчер поставит SkinsRestorer: каждый сможет выбрать себе скин командой в чате.</span>
+            <div class="row"><button type="button" id="skin-install" class="btn small">Включить скины</button></div>
+            <p class="hint" id="skin-hint"></p>
+          </div>
           <div class="row">
             <button type="button" id="save" class="btn primary">Сохранить</button>
           </div>
@@ -1225,10 +1238,10 @@
         <section class="card">
           <h2>Лаунчер</h2>
           <label class="check"><input type="checkbox" id="pf-tray"><span>Если закрыть окно, пока сервер работает, — сворачивать в трей (сервер продолжит работать)</span></label>
-          <label class="check"><input type="checkbox" id="pf-autostart"><span>Запускать лаунчер вместе с Windows (свёрнутым в трей)</span></label>
+          <label class="check"><input type="checkbox" id="pf-autostart"><span>Запускать лаунчер вместе с компьютером (свёрнутым в трей)</span></label>
           <label class="check"><input type="checkbox" id="pf-autoserver"><span>Сразу запускать последний сервер, когда открывается лаунчер</span></label>
           <label class="check"><input type="checkbox" id="pf-game"><span>Когда на этом ПК открыт Minecraft, сервер уступает игре процессор — меньше лагов у вас, сервер работает чуть медленнее</span></label>
-          <span class="sub-label">Уведомления Windows</span>
+          <span class="sub-label">Уведомления</span>
           <div class="checks">
             <label class="check"><input type="checkbox" id="pf-started"><span>Сервер готов</span></label>
             <label class="check"><input type="checkbox" id="pf-players"><span>Игрок зашёл или вышел</span></label>

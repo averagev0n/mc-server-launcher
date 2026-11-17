@@ -808,6 +808,8 @@ input[type="time"] {
 .disk-item b { font: 600 15px var(--mono); }
 .inline-select { width: auto; height: 28px; padding: 0 6px; margin: 0 4px; display: inline-block; }
 .check:has(.inline-select) { align-items: center; flex-wrap: wrap; }
+.check input.inline-time, .inline-time { width: 104px; flex: none; appearance: auto; height: 30px; padding: 0 6px; margin: 0 4px; display: inline-block; }
+.check:has(.inline-time) { align-items: center; flex-wrap: wrap; }
 .logs { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; height: 380px; }
 .lg-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .lg-list > * { flex: none; }

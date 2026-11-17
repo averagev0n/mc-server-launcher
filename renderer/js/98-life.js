@@ -377,7 +377,7 @@ function showPower(r) {
   pwDays().forEach((cb, i) => (cb.checked = r.power.days[i]));
   pwToggle();
   if (!r.power.enabled) setHint('pw-hint', 'Например: по будням с 18:00 до 23:00. За 5 минут и за минуту до выключения игроки получат предупреждение.');
-  else setHint('pw-hint', `Работает: ${r.text}.${r.autostart ? '' : ' Лаунчер должен быть открыт — включите ниже «Запускать лаунчер вместе с Windows», чтобы расписание работало и после перезагрузки.'}`, r.autostart ? 'good' : 'warn');
+  else setHint('pw-hint', `Работает: ${r.text}.${r.autostart ? '' : ' Лаунчер должен быть открыт — включите ниже «Запускать лаунчер вместе с компьютером», чтобы расписание работало и после перезагрузки.'}`, r.autostart ? 'good' : 'warn');
 }
 function pwToggle() {
   const on = $('pw-on').checked;
@@ -474,3 +474,67 @@ loadPrefs = async function () {
   }
 };
 $('pf-game').addEventListener('change', () => api.call('ui:setPrefs', { gamePriority: $('pf-game').checked }).catch(fail));
+
+// ---- автообновление по ночам ----
+
+function auResultText(r) {
+  if (!r) return '';
+  const when = new Date(r.at).toLocaleString(I18N_LOCALE, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  if (r.error) return [`${when}: не удалось — ${r.error}`, 'bad'];
+  if (r.rolledBack) return [`${when}: после обновления сервер не запускался — вернул прежние версии.${r.reason && r.reason.length ? ' ' + r.reason.join(' ') : ''}`, 'bad'];
+  if (!r.updated.length) return [`${when}: обновлений не было.`, ''];
+  return [`${when}: обновлено ${r.updated.length} — ${r.updated.map((u) => u.title).join(', ')}. Сервер запускается нормально.${r.failed.length ? ' Не получилось: ' + r.failed.join('; ') : ''}`, 'good'];
+}
+async function loadAutoUpd() {
+  if (!kinds().length || !$('version').value) return;
+  let a;
+  try {
+    a = await api.call('autoupd:get', selected());
+  } catch {
+    return;
+  }
+  $('au-on').checked = a.settings.enabled;
+  $('au-time').value = a.settings.time;
+  $('au-run').disabled = !!a.running;
+  if (a.running) setHint('au-hint', a.running);
+  else {
+    const [t, cls] = auResultText(a.last) || ['', ''];
+    setHint('au-hint', t || '', cls);
+  }
+}
+async function saveAutoUpd() {
+  try {
+    await api.call('autoupd:set', { ...selected(), enabled: $('au-on').checked, time: $('au-time').value || '04:30' });
+    setHint('au-hint', $('au-on').checked ? `Включено: каждую ночь в ${$('au-time').value}.` : 'Выключено.', 'good');
+  } catch (e) {
+    setHint('au-hint', e.message, 'bad');
+  }
+}
+$('au-on').addEventListener('change', saveAutoUpd);
+$('au-time').addEventListener('change', saveAutoUpd);
+$('au-run').addEventListener('click', async () => {
+  if (!window.confirm('Обновить моды и плагины сейчас?\n\nЛаунчер сделает копию мира, поставит новые версии и пробно запустит сервер на временном мире. Если сервер работает и на нём никого нет — он остановится и потом запустится снова.')) return;
+  $('au-run').disabled = true;
+  try {
+    await api.call('autoupd:run', selected());
+  } catch (e) {
+    setHint('au-hint', e.message, 'bad');
+    $('au-run').disabled = false;
+  }
+});
+api.on('autoupd', (a) => {
+  if (!a || a.type !== type || a.version !== $('version').value || tab !== 'maint') return;
+  if (a.done) {
+    $('au-run').disabled = false;
+    const [t, cls] = auResultText(a.result);
+    setHint('au-hint', t, cls);
+  } else {
+    $('au-run').disabled = true;
+    setHint('au-hint', a.text);
+  }
+});
+const baseLoadMaintAu = loadMaint;
+loadMaint = async function () {
+  await baseLoadMaintAu();
+  if (tab === 'maint') loadAutoUpd();
+};

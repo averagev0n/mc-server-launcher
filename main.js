@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog, nativeTheme, Tray, Menu, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, net, clipboard, safeStorage, dialog, nativeTheme, Tray, Menu, Notification, nativeImage, ClipboardItem } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -31,6 +31,7 @@ const disk = require('./lib/disk');
 const jvm = require('./lib/jvm');
 const bugreport = require('./lib/bugreport');
 const voicechat = require('./lib/voicechat');
+const autoupdate = require('./lib/autoupdate');
 const { createRemote } = require('./lib/remote');
 const tar = require('tar');
 const { createRunner, freePort } = require('./lib/runner');
@@ -160,6 +161,7 @@ async function safeAikar(java, ram) {
 async function startServer({ type, version, loader, ramGb, eula, javaPath }) {
   if (state !== 'stopped') throw new Error('Сервер уже запущен или запускается');
   if (modTest) throw new Error('Идёт поиск сломанного мода — дождитесь конца или отмените его');
+  if (autoUpd) throw new Error('Идёт автообновление модов — дождитесь конца (несколько минут)');
   core.checkArgs(type, version, loader || undefined);
   if (sleeper) await sleepCancel(sleeper.type === type && sleeper.version === version);
   const dir = serverDir(type, version);
@@ -1081,7 +1083,10 @@ handle('server:upgrade', ({ type, version, to }) => {
 
 // ---- миры ----
 
-const savesDir = () => path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.minecraft', 'saves');
+const savesDir = () =>
+  process.platform === 'win32'
+    ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.minecraft', 'saves')
+    : path.join(os.homedir(), '.minecraft', 'saves');
 
 handle('world:saves', () => servers.listSaves(savesDir()));
 handle('world:pick', async () => {
@@ -1346,9 +1351,18 @@ handle('backup:cloudGuess', () => {
 
 // ---- запуск вместе с Windows ----
 
-const launchExe = () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+const launchExe = () => process.env.PORTABLE_EXECUTABLE_FILE || process.env.APPIMAGE || process.execPath;
 function applyLoginItem(on) {
   if (!app.isPackaged) return;
+  if (process.platform === 'linux') {
+    // В Linux автозапуск — файл .desktop в ~/.config/autostart (так делают GNOME, KDE, XFCE и другие).
+    const file = path.join(app.getPath('appData'), 'autostart', 'blockhost.desktop');
+    if (!on) return fs.rmSync(file, { force: true });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const exe = launchExe().replace(/(["\\`$])/g, '\\$1');
+    fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Блокхост\nExec="${exe}" --hidden\nX-GNOME-Autostart-enabled=true\n`, 'utf8');
+    return;
+  }
   app.setLoginItemSettings({ openAtLogin: !!on, path: launchExe(), args: ['--hidden'] });
 }
 function saveLastStart(opts) {
@@ -1380,22 +1394,14 @@ function autoStartServer() {
 
 // ---- готовый сервер из другой папки ----
 
-/** Версия vanilla-сервера из version.json внутри server.jar (распаковывает встроенный в Windows tar). */
+/** Версия vanilla-сервера из version.json внутри server.jar. */
 function readJarVersion(jar) {
-  return new Promise((resolve) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcl-jar-'));
-    const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
-    require('child_process').execFile(tarExe, ['-xf', jar, '-C', tmp, 'version.json'], { windowsHide: true, timeout: 20000 }, () => {
-      let v = null;
-      try {
-        v = JSON.parse(fs.readFileSync(path.join(tmp, 'version.json'), 'utf8')).id || null;
-      } catch {
-        /* старый server.jar без version.json */
-      }
-      fs.rmSync(tmp, { recursive: true, force: true });
-      resolve(v);
-    });
-  });
+  try {
+    const f = require('./lib/zipread').readFiles(jar, ['version.json'])['version.json'];
+    return Promise.resolve(f ? JSON.parse(f.toString('utf8')).id || null : null);
+  } catch {
+    return Promise.resolve(null); // старый server.jar без version.json
+  }
 }
 handle('server:importPick', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'Папка с готовым сервером Minecraft', properties: ['openDirectory'] });
@@ -1430,29 +1436,59 @@ handle('server:paperRefresh', ({ type, version }) => {
 // ---- туннель playit.gg ----
 
 const PLAYIT_DIR = () => path.join(app.getPath('userData'), 'playit');
-const PLAYIT_EXE = () => path.join(PLAYIT_DIR(), 'playit.exe');
+const IS_WIN = process.platform === 'win32';
+const PLAYIT_EXE = () => path.join(PLAYIT_DIR(), IS_WIN ? 'playit.exe' : 'playit');
 let playitProc = null;
 let playitAuto = false; // запущен лаунчером вместе с сервером — и остановится вместе с ним
 
 async function downloadPlayit() {
   if (fs.existsSync(PLAYIT_EXE())) return;
   const rel = await getJson('https://api.github.com/repos/playit-cloud/playit-agent/releases/latest');
-  const asset =
-    (rel.assets || []).find((a) => a.name === 'playit-windows-x86_64-signed.exe') ||
-    (rel.assets || []).find((a) => a.name === 'playit-windows-x86_64.exe');
+  const names = IS_WIN
+    ? ['playit-windows-x86_64-signed.exe', 'playit-windows-x86_64.exe']
+    : process.arch === 'arm64'
+      ? ['playit-linux-aarch64']
+      : ['playit-linux-amd64'];
+  const asset = names.map((n) => (rel.assets || []).find((a) => a.name === n)).find(Boolean);
   if (!asset || !/^https:\/\/github\.com\/playit-cloud\/playit-agent\/releases\/download\//.test(asset.browser_download_url)) {
-    throw new Error('Не удалось найти программу playit для Windows');
+    throw new Error(`Не удалось найти программу playit для ${IS_WIN ? 'Windows' : 'Linux'}`);
   }
   log(`Скачиваю playit ${rel.tag_name || ''}…`);
   fs.mkdirSync(PLAYIT_DIR(), { recursive: true });
   const tmp = PLAYIT_EXE() + '.part';
   await core.downloadFile({ url: asset.browser_download_url, size: asset.size }, tmp);
   fs.renameSync(tmp, PLAYIT_EXE());
+  if (!IS_WIN) fs.chmodSync(PLAYIT_EXE(), 0o755);
 }
 function startPlayit(visible) {
   if (playitProc) return;
+  if (!IS_WIN) return startPlayitLinux(visible);
   const proc = spawn(PLAYIT_EXE(), [], { cwd: PLAYIT_DIR(), detached: visible, stdio: 'ignore', windowsHide: !visible });
   playitProc = proc;
+  proc.on('error', (e) => log(`playit не запустился: ${e.message}`, 'error'));
+  proc.on('exit', () => {
+    if (playitProc === proc) playitProc = null;
+    send('tunnel', { running: false });
+  });
+  send('tunnel', { running: true });
+}
+// В Linux у playit нет своего окна: ссылку для входа в аккаунт он печатает в вывод.
+// Лаунчер её ловит, показывает в консоли и (если настройку начал пользователь) открывает в браузере.
+function startPlayitLinux(visible) {
+  const proc = spawn(PLAYIT_EXE(), [], { cwd: PLAYIT_DIR(), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NO_COLOR: '1' } });
+  playitProc = proc;
+  let opened = false;
+  const onData = (d) => {
+    const text = String(d).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+    const m = /https:\/\/playit\.gg\/(?:claim|login|account)[^\s"'<>]*/.exec(text);
+    if (m && !opened) {
+      opened = true;
+      log(`playit: войдите в аккаунт по ссылке ${m[0]}`);
+      if (visible) shell.openExternal(m[0]).catch(() => {});
+    }
+  };
+  proc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
   proc.on('error', (e) => log(`playit не запустился: ${e.message}`, 'error'));
   proc.on('exit', () => {
     if (playitProc === proc) playitProc = null;
@@ -2220,10 +2256,7 @@ handle('sp:export', async ({ type, version, name, mode }) => {
         const res = singleplayer.exportWorld(dir, level, path.join(tmp, title));
         singleplayer.renameLevel(path.join(tmp, title, 'level.dat'), title);
         fs.rmSync(file, { force: true });
-        const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
-        await new Promise((ok, bad) =>
-          require('child_process').execFile(tarExe, ['-a', '-cf', file, '-C', tmp, title], { windowsHide: true }, (e) => (e ? bad(new Error('Не удалось собрать архив')) : ok()))
-        );
+        await require('./lib/archive').zipFolder(tmp, title, file, 'Не удалось собрать архив');
         shell.showItemInFolder(file);
         return { ...res, file };
       } finally {
@@ -2248,7 +2281,7 @@ handle('sp:openSaves', () => {
 // ---- Telegram ----
 
 const TG_FILE = () => path.join(app.getPath('userData'), 'telegram.json');
-const TG_EVENTS = { start: true, players: true, crash: true, report: true };
+const TG_EVENTS = { start: true, players: true, crash: true, report: true, update: true };
 const TG_HELP = 'Команды:\n/status — что с сервером\n/report — отчёт за неделю\n/on — запустить\n/off — остановить\n/say текст — написать игрокам';
 let tgCode = null; // { code, until } — код привязки чата
 
@@ -2969,8 +3002,11 @@ function pngFromData(dataUrl) {
   if (!m) throw new Error('Некорректная картинка');
   return Buffer.from(m[1], 'base64');
 }
-handle('invite:copy', ({ png }) => {
-  clipboard.writeImage(nativeImage.createFromBuffer(pngFromData(png)));
+handle('invite:copy', async ({ png }) => {
+  const buf = pngFromData(png);
+  // В Electron 45 writeImage убрали: картинка кладётся через ClipboardItem, как в браузере.
+  if (typeof clipboard.writeImage === 'function') clipboard.writeImage(nativeImage.createFromBuffer(buf));
+  else await clipboard.write([new ClipboardItem({ 'image/png': new Blob([buf], { type: 'image/png' }) })]);
 });
 handle('invite:save', async ({ png, name }) => {
   const r = await dialog.showSaveDialog(win, {
@@ -3202,6 +3238,184 @@ app.whenReady().then(() => {
   if ((readUi().widget || {}).open) setTimeout(openWidget, 1500);
 });
 
+// ---- автообновление модов и плагинов ----
+// Ночью: копия мира → обновления → пробный запуск на временном мире → если не поднялся, всё назад.
+
+let autoUpd = null; // { type, version, proc, text } — идёт обновление
+
+function autoupdPush() {
+  send('autoupd', autoUpd ? { type: autoUpd.type, version: autoUpd.version, text: autoUpd.text } : null);
+}
+async function waitStopped(ms) {
+  const until = Date.now() + ms;
+  while (state !== 'stopped' && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+  return state === 'stopped';
+}
+
+async function autoUpdateRun(type, version, manual) {
+  if (autoUpd) throw new Error('Обновление уже идёт');
+  if (modTest) throw new Error('Идёт поиск сломанного мода — обновление подождёт');
+  if (!mods.kindsFor(type).length) throw new Error('На этот сервер моды и плагины не ставятся');
+  const dir = serverDir(type, version);
+  const inst = core.readInstall(dir);
+  if (!inst) throw new Error('Сервер ещё не установлен — запустите его хотя бы раз');
+  if (!core.eulaAccepted(dir)) throw new Error('Сначала примите лицензию Minecraft и запустите сервер — без этого пробный запуск невозможен');
+  if (runner.has(bgKey(type, version))) throw new Error('Сервер работает в фоне — остановите его');
+  const title = serverTitle(type, version);
+  const mine = isCurrent(type, version) && state !== 'stopped';
+  if (mine && online.size > 0) throw new Error(`На сервере играют (${online.size}) — обновление отложено, чтобы никого не выкинуть`);
+  if (!mine && state !== 'stopped') throw new Error('Сейчас работает другой сервер — пробный запуск ему помешает');
+  const flavor = flavorFor(type, version, inst.loader);
+  const st = autoupdate.readState(dir);
+  const result = { at: Date.now(), ok: true, updated: [], failed: [], rolledBack: false };
+  autoUpd = { type, version, proc: null, text: 'Проверяю обновления…' };
+  autoupdPush();
+  let wasRunning = false;
+  try {
+    const todo = [];
+    for (const kind of mods.kindsFor(type)) {
+      const list = await mods.checkUpdates({ type, mc: version, dir, kind, flavor });
+      for (const x of list) if (x.update) todo.push({ kind, ...x });
+    }
+    if (!todo.length) {
+      log(`Автообновление «${title}»: всё уже свежее.`);
+      return result;
+    }
+    if (mine) {
+      wasRunning = true;
+      autoUpd.text = 'Останавливаю сервер…';
+      autoupdPush();
+      log(`Автообновление «${title}»: останавливаю сервер, чтобы обновить ${todo.length} шт.`);
+      stopServer();
+      if (!(await waitStopped(120000))) throw new Error('Сервер не остановился');
+    }
+    autoUpd.text = 'Делаю копию мира…';
+    autoupdPush();
+    if (backup.worldDirs(dir).length) await makeBackup(dir, 'before-update', false);
+    const indexText = autoupdate.readIndexText(dir);
+    const done = [];
+    for (const x of todo) {
+      autoUpd.text = `Обновляю ${x.title || x.file}…`;
+      autoupdPush();
+      try {
+        const r = await mods.updateFile({ type, mc: version, dir, kind: x.kind, flavor, file: x.file, onLog: log });
+        if (r.unchanged) continue;
+        done.push({ folder: x.kind === 'plugin' ? 'plugins' : 'mods', oldFile: x.file, newFile: r.file, backup: r.backup, title: r.title || x.title || x.file, from: x.current, to: r.version });
+      } catch (e) {
+        result.failed.push(`${x.title || x.file}: ${e.message}`);
+      }
+    }
+    result.updated = done.map((d) => ({ title: d.title, from: d.from, to: d.to }));
+    if (!done.length) return result;
+
+    // Пробный запуск на временном мире: настоящий мир не трогаем.
+    autoUpd.text = 'Пробный запуск сервера…';
+    autoupdPush();
+    log(`Автообновление «${title}»: обновлено ${done.length}, пробный запуск на временном мире…`);
+    const params = startParams(type, version);
+    const java = await chooseJava(type, version, params.javaPath);
+    const ram = Math.max(1, Math.min(memoryInfo().maxGb, Math.round(Number(params.ramGb)) || 2));
+    const level = core.readProps(dir)['level-name'] || 'world';
+    autoupdate.clearTestWorld(dir);
+    core.writeProps(dir, { 'level-name': autoupdate.TEST_LEVEL });
+    let boot;
+    try {
+      boot = await trialBoot(dir, java, ram, inst, (p) => {
+        if (autoUpd) autoUpd.proc = p;
+      });
+    } finally {
+      core.writeProps(dir, { 'level-name': level });
+      autoupdate.clearTestWorld(dir);
+    }
+    if (!boot.ok) {
+      const problems = autoupdate.rollback(dir, done, indexText);
+      result.ok = false;
+      result.rolledBack = true;
+      result.reason = autoupdate.failLines(boot.tail);
+      if (problems.length) result.failed.push(...problems.map((p) => 'Откат: ' + p));
+      log(`Автообновление «${title}»: после обновления сервер не запустился — вернул прежние версии.${result.reason.length ? ' Причина: ' + result.reason.join(' | ') : ''}`, 'error');
+    } else {
+      log(`Автообновление «${title}»: обновлено ${done.length}, сервер запускается нормально.`);
+    }
+    return result;
+  } catch (e) {
+    result.ok = false;
+    result.error = e.message;
+    log(`Автообновление «${title}» не удалось: ${e.message}`, 'error');
+    return result;
+  } finally {
+    autoupdate.writeState(dir, { ...st, lastRun: autoupdate.dayKey(new Date()), last: result });
+    autoUpd = null;
+    autoupdPush();
+    send('autoupd', { done: true, type, version, result });
+    if (result.updated.length || result.error) {
+      const list = result.updated.map((u) => `• ${u.title} ${u.from || ''} → ${u.to}`).join('\n');
+      const head = result.error
+        ? `⚠️ «${title}»: автообновление не удалось — ${result.error}`
+        : result.rolledBack
+          ? `↩️ «${title}»: после обновления сервер не запускался, вернул прежние версии.`
+          : `🔄 «${title}»: обновлено ${result.updated.length}, сервер запускается нормально.`;
+      tgNotify('update', `${head}${list && !result.rolledBack ? '\n' + list : ''}${result.rolledBack && result.reason && result.reason.length ? '\n' + result.reason.join('\n') : ''}`);
+    }
+    if (wasRunning && state === 'stopped') startServer({ ...startParams(type, version), eula: false }).catch((e) => log(e.message, 'error'));
+    if (manual) {
+      /* ручной запуск — результат увидят в карточке */
+    }
+  }
+}
+
+// Раз в минуту: не пора ли обновлять какой-нибудь сервер.
+setInterval(() => {
+  if (autoUpd || modTest) return;
+  let names = [];
+  try {
+    names = fs.readdirSync(ROOT);
+  } catch {
+    return;
+  }
+  const now = new Date();
+  for (const n of names) {
+    const m = /^([a-z]+)-(.+)$/.exec(n);
+    if (!m || !core.TYPES.includes(m[1]) || !mods.kindsFor(m[1]).length) continue;
+    const dir = path.join(ROOT, n);
+    let cfg;
+    try {
+      cfg = backup.readSettings(dir).autoupd;
+    } catch {
+      continue;
+    }
+    const stt = autoupdate.readState(dir);
+    if (!autoupdate.due(cfg, now, stt)) continue;
+    autoUpdateRun(m[1], m[2], false).catch((e) => {
+      // Не получилось начать (играют, работает другой сервер) — попробуем через минуту, пока не кончится окно.
+      if (Date.now() - (lastAutoupdWarn.get(n) || 0) > 30 * 60000) {
+        lastAutoupdWarn.set(n, Date.now());
+        log(`Автообновление «${serverTitle(m[1], m[2])}» откладывается: ${e.message}`);
+      }
+    });
+    return;
+  }
+}, 60000);
+const lastAutoupdWarn = new Map();
+
+handle('autoupd:get', ({ type, version }) => {
+  const dir = serverDir(type, version);
+  return {
+    settings: backup.readSettings(dir).autoupd,
+    last: autoupdate.readState(dir).last || null,
+    running: autoUpd && autoUpd.type === type && autoUpd.version === version ? autoUpd.text : null,
+  };
+});
+handle('autoupd:set', ({ type, version, enabled, time }) => backup.writeSettings(serverDir(type, version), { autoupd: { enabled, time } }).autoupd);
+handle('autoupd:run', ({ type, version }) => {
+  // Отвечаем сразу, ход — событиями autoupd.
+  autoUpdateRun(type, version, true).catch((e) => send('autoupd', { done: true, type, version, result: { at: Date.now(), ok: false, error: e.message, updated: [], failed: [] } }));
+  return true;
+});
+handle('autoupd:cancel', () => {
+  if (autoUpd && autoUpd.proc) autoUpd.proc.kill();
+});
+
 // ---- поиск мода, из-за которого сервер падает ----
 // Запуски идут на временном мире (настоящий мир без половины модов испортился бы),
 // выключенные моды лежат в mcl-modtest-off. Всё возвращается на место в любом случае.
@@ -3210,11 +3424,17 @@ function modtestPush() {
   send('modtest', modTest ? { ...modTest.pub } : null);
 }
 function modtestBoot(dir, java, ram, inst) {
+  return trialBoot(dir, java, ram, inst, (p) => {
+    if (modTest) modTest.proc = p;
+  });
+}
+/** Пробный запуск: дождаться «Done», сразу остановить. onProc(proc|null) — чтобы можно было прервать. */
+function trialBoot(dir, java, ram, inst, onProc) {
   return new Promise((resolve) => {
     const tail = [];
     let done = false;
     const proc = spawn(java.path, ['-Xms1G', `-Xmx${java.bits === 32 ? 1 : ram}G`, '-Djava.net.useSystemProxies=true', '-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', ...inst.args, 'nogui'], { cwd: dir, windowsHide: true });
-    modTest.proc = proc;
+    onProc(proc);
     const hang = setTimeout(() => {
       tail.push('[лаунчер] Сервер не запустился за 15 минут — считаю, что он завис.');
       proc.kill();
@@ -3243,7 +3463,7 @@ function modtestBoot(dir, java, ram, inst) {
     proc.on('error', (e) => tail.push(e.message));
     proc.on('close', () => {
       clearTimeout(hang);
-      modTest.proc = null;
+      onProc(null);
       resolve({ ok: done, tail });
     });
   });
@@ -3258,6 +3478,7 @@ handle('modtest:cancel', () => {
 });
 handle('modtest:start', async ({ type, version }) => {
   if (modTest) throw new Error('Поиск уже идёт');
+  if (autoUpd) throw new Error('Идёт автообновление модов — дождитесь конца');
   if (state !== 'stopped' || child) throw new Error('Остановите сервер — поиск сам будет запускать его много раз');
   if (!isModded(type)) throw new Error('Поиск нужен только серверам с модами');
   const dir = serverDir(type, version);

@@ -1,0 +1,65 @@
+# Linux-версия: AppImage собирается на Ubuntu (в Windows её не собрать) и прикрепляется к выпуску.
+# Запускается сама, когда scripts/release.js публикует выпуск, или вручную (без загрузки — для проверки).
+name: Сборка для Linux
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Автотесты
+        run: npm test
+
+      - name: Пробный запуск лаунчера
+        # Окно открывается на виртуальном экране; лаунчер должен проработать 25 секунд и не упасть.
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libfuse2 > /dev/null
+          set +e
+          timeout 25 xvfb-run -a npx electron . --no-sandbox > electron.log 2>&1
+          code=$?
+          set -e
+          tail -n 40 electron.log
+          if [ "$code" != "124" ]; then echo "Лаунчер завершился раньше времени (код $code)"; exit 1; fi
+          if grep -E "Uncaught|TypeError|ReferenceError" electron.log; then echo "В журнале есть ошибки"; exit 1; fi
+
+      - name: Сборка AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Прикрепить к выпуску
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/MC-Server-Launcher-Linux.AppImage dist/latest-linux.yml --clobber
+
+      - name: Сохранить сборку (ручной запуск)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockhost-linux
+          path: |
+            dist/MC-Server-Launcher-Linux.AppImage
+            dist/latest-linux.yml

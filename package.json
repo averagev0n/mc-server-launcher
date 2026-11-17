@@ -73,7 +73,22 @@
       "lib/mapworker.js",
       "lib/maprender.js",
       "lib/nbt.js"
-    ]
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "Game",
+      "executableName": "blockhost",
+      "synopsis": "Свой сервер Minecraft за пару кликов",
+      "artifactName": "MC-Server-Launcher-Linux.${ext}"
+    }
   },
   "devDependencies": {
     "electron": "^45.3.1",
@@ -86,5 +101,6 @@
     "ssh2": "^1.17.0",
     "tar": "^7.5.23",
     "yaml": "^2.9.1"
-  }
+  },
+  "desktopName": "blockhost.desktop"
 }

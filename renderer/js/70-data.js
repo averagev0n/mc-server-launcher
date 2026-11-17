@@ -46,6 +46,7 @@ function fillProps(props) {
   $('p-difficulty').value = props.difficulty;
   $('p-motd').value = props.motd;
   $('p-online').checked = props['online-mode'] !== 'false';
+  if (typeof renderSkins === 'function') renderSkins();
 }
 
 function fillLoaders() {

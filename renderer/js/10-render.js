@@ -98,14 +98,14 @@ function renderRamHint() {
   const total = memory ? memory.totalGb : null;
   if (!raw || !Number.isInteger(n) || n < 1 || n > max) {
     setHint('ram-hint', total
-      ? `Можно от 1 до ${max} ГБ: в компьютере всего ${total} ГБ, часть нужна Windows.`
+      ? `Можно от 1 до ${max} ГБ: в компьютере всего ${total} ГБ, часть нужна системе.`
       : `Можно от 1 до ${max} ГБ.`, 'bad');
     return false;
   }
   if (!total) {
     setHint('ram-hint', '');
   } else if (n > total * 0.75) {
-    setHint('ram-hint', `Это почти вся память компьютера (${total} ГБ). Windows и игре, если вы играете на этом же ПК, может не хватить.`, 'warn');
+    setHint('ram-hint', `Это почти вся память компьютера (${total} ГБ). Системе и игре, если вы играете на этом же ПК, может не хватить.`, 'warn');
   } else {
     setHint('ram-hint', `В компьютере ${total} ГБ, серверу можно выделить до ${max} ГБ.`);
   }

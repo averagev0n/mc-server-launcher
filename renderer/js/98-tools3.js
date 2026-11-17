@@ -639,7 +639,14 @@ function ivDraw() {
 for (const id of ['iv-title', 'iv-addr', 'iv-note']) $(id).addEventListener('input', ivDraw);
 $('iv-copy').addEventListener('click', async () => {
   try {
-    await api.call('invite:copy', { png: $('iv-canvas').toDataURL('image/png') });
+    // Картинку кладём в буфер прямо из окна (стандартный способ браузера);
+    // если он недоступен — через основной процесс.
+    const blob = await new Promise((r) => $('iv-canvas').toBlob(r, 'image/png'));
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    } catch {
+      await api.call('invite:copy', { png: $('iv-canvas').toDataURL('image/png') });
+    }
     setHint('iv-hint', 'Скопировано — вставьте в чат сочетанием Ctrl+V.', 'good');
   } catch (e) {
     setHint('iv-hint', e.message, 'bad');

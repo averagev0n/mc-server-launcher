@@ -117,7 +117,7 @@ $('up-go').addEventListener('click', async () => {
 
 $('srv-delete').addEventListener('click', async () => {
   const name = selName();
-  if (!window.confirm(`Удалить сервер «${name}»?\n\nПапка сервера с миром, модами и копиями попадёт в корзину Windows — оттуда её можно вернуть.`)) return;
+  if (!window.confirm(`Удалить сервер «${name}»?\n\nПапка сервера с миром, модами и копиями попадёт в корзину — оттуда её можно вернуть.`)) return;
   try {
     await api.call('server:delete', selected());
   } catch (e) {

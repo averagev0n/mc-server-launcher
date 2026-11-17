@@ -305,7 +305,7 @@ loadSettingsExtras = async function (force) {
   if (extrasKey !== before || force) loadMore();
 };
 
-// ---- запуск вместе с Windows ----
+// ---- запуск вместе с компьютером ----
 
 const baseLoadPrefs = loadPrefs;
 loadPrefs = async function () {
