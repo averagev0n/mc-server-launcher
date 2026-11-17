@@ -193,7 +193,37 @@ function renderVps() {
         note.className = 'hint bad';
       }
     });
-    actions.append(cons, check, note);
+    const graphs = document.createElement('button');
+    graphs.type = 'button';
+    graphs.className = 'btn small';
+    graphs.textContent = 'Графики';
+    graphs.title = 'Нагрузка на процессор и память, игроки онлайн';
+    graphs.addEventListener('click', () => openVpsStats(s));
+    const settings = document.createElement('button');
+    settings.type = 'button';
+    settings.className = 'btn small';
+    settings.textContent = 'Настройки';
+    settings.addEventListener('click', () => openVpsSettings(s));
+    actions.append(cons, graphs, settings, check);
+    if (!s.running) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn small danger';
+      del.textContent = 'Удалить';
+      del.title = 'Стереть этот сервер с VPS вместе с миром';
+      del.addEventListener('click', async () => {
+        // Подтверждение — до блокировки кнопок, чтобы «Отмена» ничего не трогала.
+        const v2 = vpsSel();
+        if (!v2) return;
+        const sure = window.confirm(
+          `Удалить сервер «${s.name}» с VPS «${v2.name}»?\n\n` +
+            'Папка сервера на VPS будет стёрта вместе с миром, модами и настройками. Вернуть её будет нельзя.'
+        );
+        if (sure) act(() => deleteVpsServer(s), 'Удаляю…');
+      });
+      actions.append(del);
+    }
+    actions.append(note);
     row.append(body, actions);
     box.appendChild(row);
   }

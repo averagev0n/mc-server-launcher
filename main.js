@@ -4052,6 +4052,25 @@ handle('vps:checkPort', ({ id, port }) => {
   const p = vps().get(id);
   return vps().checkPort(p.host, port || 25565);
 });
+handle('vps:settings', ({ id, name }) => vps().settings(id, name));
+handle('vps:saveSettings', ({ id, name, values, ramGb }) => vps().saveSettings(id, name, { values, ramGb }));
+handle('vps:removeServer', ({ id, name }) => vps().removeServer(id, name));
+handle('vps:stats', async ({ id, name, port, size }) => {
+  const s = await vps().stats(id, name, !!size);
+  // Игроков спрашиваем у самого сервера, как список серверов в игре (порт должен быть открыт).
+  s.players = null;
+  if (s.running) {
+    try {
+      const st = await require('./lib/slp').status(vps().get(id).host, port || 25565, 4000);
+      s.players = st.online;
+      s.maxPlayers = st.max;
+      s.playerNames = st.names;
+    } catch {
+      /* порт закрыт или сервер ещё загружается */
+    }
+  }
+  return s;
+});
 
 handle('issue:copyLog', () => {
   const text = logLines.slice(-500).join('\n');

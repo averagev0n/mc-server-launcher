@@ -17,6 +17,8 @@ const scripts = () => ({
   launch: win.launchScript('my-srv', 4),
   command: win.commandScript('my-srv', Buffer.from('say hi\n').toString('base64')),
   stop: win.stopScript('my-srv'),
+  stats: win.statsScript('my-srv', true),
+  del: win.deleteScript('my-srv'),
 });
 
 test('Windows VPS: кавычки в PowerShell экранируются', () => {
@@ -77,12 +79,32 @@ test('Windows VPS: запуск в фоне, команда серверу, ос
     sleep(2500);
     assert.match(log(), /got:say hello/);
 
+    // Замер нагрузки: дерево процессов сервера найдено, память и время есть.
+    const manage = require('../lib/vps-manage');
+    const st = manage.parseStats(ps(win.statsScript('t1', true), 'stats').stdout);
+    assert.equal(st.running, true);
+    assert.ok(st.procMem > 0 && st.procCpu >= 0 && st.age >= 0, JSON.stringify(st));
+    assert.ok(st.memTotal > 0 && st.size > 0 && st.sysCpu !== null);
+    // Запущенный сервер не удаляется.
+    const busy = ps(win.deleteScript('t1'), 'del-busy');
+    assert.equal(busy.status, 4);
+    assert.ok(fs.existsSync(srv));
+
     assert.match(ps(win.stopScript('t1'), 'stop').stdout, /stopped/);
     sleep(1000);
     assert.match(log(), /Сервер остановлен \(код 0\)/);
     assert.ok(!fs.existsSync(path.join(srv, 'mcl.pid')));
     // Остановленному серверу команды не передаются.
     assert.equal(ps(win.commandScript('t1', Buffer.from('say late\n').toString('base64')), 'cmd2').status, 4);
+    assert.equal(manage.parseStats(ps(win.statsScript('t1', false), 'stats2').stdout).running, false);
+
+    // Удаление остановленного: папка исчезает, соседние остаются; папку без mcl.json не трогаем.
+    const other = path.join(home, 'mc-launcher', 'servers', 'other');
+    fs.mkdirSync(other);
+    assert.match(ps(win.deleteScript('t1'), 'del').stdout, /deleted/);
+    assert.ok(!fs.existsSync(srv));
+    assert.equal(ps(win.deleteScript('other'), 'del-other').status, 5);
+    assert.ok(fs.existsSync(other));
   } finally {
     ps(win.stopScript('t1'), 'stop-final');
   }

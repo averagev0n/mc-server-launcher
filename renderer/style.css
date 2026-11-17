@@ -597,13 +597,39 @@ input[type="time"] {
 .vt-steps:empty { display: none; }
 .vt-steps li:last-child { color: var(--text); }
 .vt-steps li.bad { color: var(--danger); }
+.vps-srv { flex-direction: column; align-items: stretch; gap: 10px; }
 .vps-srv .item-body { gap: 4px; }
 .vps-srv .ram { width: 64px; height: 30px; }
-.vps-srv .actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.vps-srv .actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-start; }
+.vps-srv .actions .danger:last-of-type { margin-left: auto; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 4px; }
 .dot.on { background: var(--ok); }
 .vps-console { flex: 1 1 50%; min-height: 220px; }
 .vps-console .log { min-height: 120px; }
+.vps-head h2 { margin: 0; }
+.vps-head .meta { flex: 1; }
+#vps-set .vps-head h2 { flex: 1; }
+.vs-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px 16px; background: var(--raise); }
+.vs-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+.vs-chart { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.vs-chart figcaption { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.vs-chart figcaption b { font-weight: 600; }
+.vs-chart canvas { width: 100%; height: 96px; display: block; }
+.vs-key { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11.5px; }
+.vs-key i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-left: 6px; }
+.vs-key i:first-child { margin-left: 0; }
+.vs-key .k1 { background: var(--accent); }
+.vs-key .k2 { background: var(--chart-2); }
+.vset-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.vset-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 16px; }
+#vset-body > .row { align-items: center; }
+#vset-body > .row .btn { flex: none; }
+.vset-all summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 4px 0; }
+.vset-table { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 340px; overflow-y: auto; padding-right: 4px; }
+.vset-row { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: center; gap: 10px; }
+.vset-row code { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vset-row input[type="text"] { height: 30px; }
+.vset-row input[type="checkbox"] { justify-self: start; width: 16px; height: 16px; accent-color: var(--accent); }
 
 /* ---- объяснения ошибок ---- */
 

@@ -846,6 +846,91 @@
                 <h2>Серверы на VPS</h2>
                 <div id="vps-servers" class="list"></div>
               </section>
+
+              <section class="card" id="vps-stats" hidden>
+                <div class="vps-head">
+                  <h2 id="vs-title">Нагрузка</h2>
+                  <span class="meta" id="vs-sub"></span>
+                  <button type="button" id="vs-close" class="btn small">Скрыть</button>
+                </div>
+                <div class="stats vs-tiles">
+                  <div class="stat"><span class="stat-label">Процессор сервера</span><b id="vs-cpu">—</b></div>
+                  <div class="stat"><span class="stat-label">Память сервера</span><b id="vs-mem">—</b></div>
+                  <div class="stat"><span class="stat-label">Игроки</span><b id="vs-players">—</b></div>
+                  <div class="stat"><span class="stat-label">Работает</span><b id="vs-up">—</b></div>
+                  <div class="stat"><span class="stat-label">Процессор VPS</span><b id="vs-syscpu">—</b></div>
+                  <div class="stat"><span class="stat-label">Свободно памяти</span><b id="vs-sysmem">—</b></div>
+                  <div class="stat"><span class="stat-label">Свободно на диске</span><b id="vs-disk">—</b></div>
+                  <div class="stat"><span class="stat-label">Папка сервера</span><b id="vs-size">—</b></div>
+                </div>
+                <div class="vs-charts">
+                  <figure class="vs-chart">
+                    <figcaption><b>Процессор, %</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
+                    <canvas id="vs-ch-cpu" role="img" aria-label="График загрузки процессора"></canvas>
+                  </figure>
+                  <figure class="vs-chart">
+                    <figcaption><b>Память, ГБ</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
+                    <canvas id="vs-ch-mem" role="img" aria-label="График памяти"></canvas>
+                  </figure>
+                  <figure class="vs-chart">
+                    <figcaption><b>Игроки онлайн</b></figcaption>
+                    <canvas id="vs-ch-players" role="img" aria-label="График числа игроков"></canvas>
+                  </figure>
+                </div>
+                <p class="hint" id="vs-hint"></p>
+              </section>
+
+              <section class="card" id="vps-set" hidden>
+                <div class="vps-head">
+                  <h2 id="vset-title">Настройки</h2>
+                  <button type="button" id="vset-close" class="btn small">Скрыть</button>
+                </div>
+                <p class="hint" id="vset-load"></p>
+                <div id="vset-body" class="stack" hidden>
+                  <label class="field"><span>Описание в списке серверов</span><input type="text" data-vprop="motd" maxlength="160"></label>
+                  <div class="grid vset-grid">
+                    <label class="field"><span>Игроков</span><input type="number" data-vprop="max-players" min="1" max="1000"></label>
+                    <label class="field"><span>Режим</span>
+                      <select data-vprop="gamemode">
+                        <option value="survival">Выживание</option>
+                        <option value="creative">Творческий</option>
+                        <option value="adventure">Приключение</option>
+                        <option value="spectator">Наблюдатель</option>
+                      </select>
+                    </label>
+                    <label class="field"><span>Сложность</span>
+                      <select data-vprop="difficulty">
+                        <option value="peaceful">Мирная</option>
+                        <option value="easy">Лёгкая</option>
+                        <option value="normal">Нормальная</option>
+                        <option value="hard">Сложная</option>
+                      </select>
+                    </label>
+                    <label class="field"><span>Память, ГБ</span><input type="number" id="vset-ram" min="1" max="256"></label>
+                    <label class="field"><span>Дальность прорисовки</span><input type="number" data-vprop="view-distance" min="2" max="32"></label>
+                    <label class="field"><span>Дальность симуляции</span><input type="number" data-vprop="simulation-distance" min="2" max="32"></label>
+                    <label class="field"><span>Защита спавна, блоков</span><input type="number" data-vprop="spawn-protection" min="0" max="10000"></label>
+                    <label class="field"><span>Порт</span><input type="number" data-vprop="server-port" min="1" max="65535"></label>
+                  </div>
+                  <div class="vset-checks">
+                    <label class="check"><input type="checkbox" data-vprop="pvp"><span>Игроки могут драться друг с другом</span></label>
+                    <label class="check"><input type="checkbox" data-vprop="online-mode"><span>Пускать только лицензионные аккаунты</span></label>
+                    <label class="check"><input type="checkbox" data-vprop="white-list"><span>Белый список: заходят только добавленные игроки</span></label>
+                    <label class="check"><input type="checkbox" data-vprop="allow-flight"><span>Не выкидывать за полёт (нужно для модов с полётом)</span></label>
+                    <label class="check"><input type="checkbox" data-vprop="hardcore"><span>Хардкор: после смерти — только наблюдатель</span></label>
+                    <label class="check"><input type="checkbox" data-vprop="enable-command-block"><span>Командные блоки работают</span></label>
+                  </div>
+                  <details class="vset-all">
+                    <summary>Все параметры server.properties <span class="meta" id="vset-count"></span></summary>
+                    <div id="vset-all" class="vset-table"></div>
+                  </details>
+                  <div class="row">
+                    <button type="button" id="vset-save" class="btn primary">Сохранить</button>
+                    <button type="button" id="vset-restart" class="btn" hidden>Перезапустить сервер</button>
+                    <span class="hint" id="vset-hint"></span>
+                  </div>
+                </div>
+              </section>
             </div>
 
             <section id="vps-console" class="vps-console card" hidden>
@@ -1360,6 +1445,7 @@
   <script src="js/47-maint.js"></script>
   <script src="js/48-mrpack.js"></script>
   <script src="js/50-vps.js"></script>
+  <script src="js/51-vps-manage.js"></script>
   <script src="js/60-updates.js"></script>
   <script src="js/70-data.js"></script>
   <script src="js/80-events.js"></script>
