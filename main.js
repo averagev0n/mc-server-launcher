@@ -3994,6 +3994,9 @@ function vps() {
       // Пароли храним зашифрованными средствами Windows (DPAPI): прочитать их может только этот пользователь.
       encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
       decrypt: (b) => safeStorage.decryptString(Buffer.from(b, 'base64')),
+      // Сообщения фоновых задач на VPS (Discord, чат) — на языке лаунчера.
+      translate: (s) => T(s),
+      lang: () => uiLang(),
     });
   }
   return vpsApi;
@@ -4070,6 +4073,287 @@ handle('vps:stats', async ({ id, name, port, size }) => {
     }
   }
   return s;
+});
+
+// ---- VPS: фоновые задачи, история, бэкапы, игроки, файлы, перенос, Chunky ----
+
+const vpsAuto = require('./lib/vps-auto');
+
+handle('vps:autoGet', ({ id, name }) => vps().autoGet(id, name));
+handle('vps:autoSave', ({ id, name, conf }) => vps().autoSave(id, name, conf));
+handle('vps:autoEnable', ({ id }) => vps().autoEnable(id));
+handle('vps:discordTest', async ({ url }) => {
+  if (!vpsAuto.WEBHOOK_RE.test(String(url || '').trim())) throw new Error('Это не похоже на адрес вебхука Discord (https://discord.com/api/webhooks/…)');
+  await discord.test(String(url).trim(), 'Проверка: сюда будут приходить сообщения о сервере на VPS.');
+});
+
+/** История нагрузки: range — '24h' или '7d'; точки сжаты до 288 (24 ч — по 5 минут). */
+handle('vps:history', async ({ id, name, range }) => {
+  const { text } = await vps().history(id, name);
+  if (text === null) return { installed: false, points: [] };
+  const span = range === '7d' ? 7 * 86400000 : 86400000;
+  const to = Date.now();
+  const points = vpsAuto.bucket(vpsAuto.parseHistory(text), to - span, to, 288);
+  return { installed: true, points, from: to - span, to };
+});
+
+// Уведомления о серверах на VPS: лаунчер раз в минуту читает события, пока он открыт (в том числе в трее).
+const VPS_NOTIFY_FILE = () => path.join(app.getPath('userData'), 'vps-notify.json');
+function vpsNotifyAll() {
+  try {
+    const v = JSON.parse(fs.readFileSync(VPS_NOTIFY_FILE(), 'utf8'));
+    return v && typeof v === 'object' ? v : {};
+  } catch {
+    return {};
+  }
+}
+function vpsNotifyStore(all) {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(VPS_NOTIFY_FILE(), JSON.stringify(all, null, 2), 'utf8');
+}
+const VPS_NOTIFY_KINDS = ['crash', 'backup', 'disk', 'join'];
+handle('vps:notifyGet', ({ id, name }) => {
+  const n = vpsNotifyAll()[`${id}/${name}`] || {};
+  return Object.fromEntries(VPS_NOTIFY_KINDS.map((k) => [k, !!n[k]]));
+});
+handle('vps:notifySet', ({ id, name, prefs: p }) => {
+  if (!manageSafe(name)) throw new Error('Некорректное имя сервера');
+  const all = vpsNotifyAll();
+  const key = `${id}/${name}`;
+  const cur = all[key] || {};
+  for (const k of VPS_NOTIFY_KINDS) cur[k] = !!(p && p[k]);
+  // Прошлые события не показываем — только то, что случится дальше.
+  if (!cur.last) cur.last = Math.floor(Date.now() / 1000);
+  if (VPS_NOTIFY_KINDS.some((k) => cur[k])) all[key] = cur;
+  else delete all[key];
+  vpsNotifyStore(all);
+  return cur;
+});
+const manageSafe = (n) => require('./lib/vps-manage').safeName(n);
+
+function vpsEventText(e, vpsName) {
+  const where = `«${e.server}» (VPS «${vpsName}»)`;
+  switch (e.kind) {
+    case 'crash':
+      return ['Сервер на VPS упал', `${T('Сервер')} ${where} ${T('упал и запускается заново')}`];
+    case 'crashed':
+      return ['Сервер на VPS упал', `${T('Сервер')} ${where} ${T('упал. Автоперезапуск выключен.')}`];
+    case 'gaveup':
+      return ['Сервер на VPS не поднимается', `${T('Сервер')} ${where} ${T('падает при каждом запуске — автоперезапуск остановлен.')}`];
+    case 'boot':
+      return ['VPS перезагрузился', `${T('Сервер')} ${where} ${T('запускается после перезагрузки.')}`];
+    case 'backup':
+      return ['Бэкап готов', `${T('Сервер')} ${where}: ${e.arg} ${T('МБ')}`];
+    case 'backupfail':
+      return ['Бэкап не удался', `${T('Сервер')} ${where}`];
+    case 'disk':
+      return ['На VPS мало места', `${T('Свободно')} ${e.arg} ${T('МБ')} — ${where}`];
+    case 'join':
+      return ['Игрок зашёл', `${e.arg} → ${where}`];
+    case 'leave':
+      return ['Игрок вышел', `${e.arg} ← ${where}`];
+    default:
+      return null;
+  }
+}
+const VPS_KIND_PREF = { crash: 'crash', crashed: 'crash', gaveup: 'crash', boot: 'crash', backup: 'backup', backupfail: 'backup', disk: 'disk', join: 'join', leave: 'join' };
+
+let vpsPollBusy = false;
+setInterval(async () => {
+  if (vpsPollBusy || !app.isReady()) return;
+  const all = vpsNotifyAll();
+  const keys = Object.keys(all);
+  if (!keys.length) return;
+  vpsPollBusy = true;
+  try {
+    const profiles = new Map(vps().list().map((p) => [p.id, p]));
+    let changed = false;
+    for (const key of keys) {
+      const i = key.indexOf('/');
+      const id = key.slice(0, i);
+      const name = key.slice(i + 1);
+      const p = profiles.get(id);
+      if (!p) continue;
+      let list;
+      try {
+        list = await vps().events(id, name);
+      } catch {
+        continue; // VPS недоступен — попробуем через минуту
+      }
+      const pref = all[key];
+      const fresh = list.filter((e) => e.ts > (pref.last || 0));
+      if (!fresh.length) continue;
+      pref.last = Math.max(...fresh.map((e) => e.ts));
+      changed = true;
+      // После долгого перерыва (лаунчер был закрыт) не засыпаем уведомлениями — только последние.
+      for (const e of fresh.slice(-5)) {
+        if (!pref[VPS_KIND_PREF[e.kind]]) continue;
+        const t = vpsEventText(e, p.name);
+        if (t) notify(t[0], t[1], true);
+      }
+    }
+    if (changed) {
+      // Пока шла проверка, настройки могли поменять в окне — перечитываем и обновляем только «last».
+      const now = vpsNotifyAll();
+      for (const k of keys) if (now[k]) now[k].last = Math.max(now[k].last || 0, all[k].last || 0);
+      vpsNotifyStore(now);
+    }
+  } catch {
+    /* фоновая проверка не должна мешать работе */
+  } finally {
+    vpsPollBusy = false;
+  }
+}, 60000);
+
+// Бэкапы
+handle('vps:backups', ({ id, name }) => vps().backups(id, name));
+handle('vps:backupNow', ({ id, name }) => vps().backupNow(id, name));
+handle('vps:restore', ({ id, name, file }) => vps().restoreBackup(id, name, file));
+handle('vps:backupDelete', ({ id, name, file }) => vps().deleteBackup(id, name, file));
+handle('vps:backupDownload', async ({ id, name, file }) => {
+  const r = await dialog.showSaveDialog(win, { title: 'Сохранить бэкап', defaultPath: path.join(app.getPath('downloads'), String(file)), filters: [{ name: 'Архив', extensions: ['gz'] }] });
+  if (r.canceled || !r.filePath) return null;
+  await vps().downloadBackup(id, name, file, r.filePath, (done, total) => send('vps:job', { key: `bk:${id}/${name}`, done, total }));
+  return { path: r.filePath };
+});
+
+// Игроки: списки из файлов и кто онлайн (из ответа сервера, как в списке серверов игры).
+handle('vps:players', async ({ id, name, port }) => {
+  const lists = await vps().playerLists(id, name);
+  let online = null;
+  try {
+    const st = await require('./lib/slp').status(vps().get(id).host, port || 25565, 4000);
+    online = { count: st.online, max: st.max, names: st.names };
+  } catch {
+    /* сервер остановлен или порт закрыт */
+  }
+  return { ...lists, online };
+});
+handle('vps:playerAction', ({ id, name, list, action, value, reason }) => vps().playerAction(id, name, { list, action, value, reason }));
+
+// Файлы
+handle('vps:files', ({ id, name, rel }) => vps().files(id, name, rel));
+handle('vps:fileRead', ({ id, name, rel }) => vps().fileRead(id, name, rel));
+handle('vps:fileWrite', ({ id, name, rel, text }) => vps().fileWrite(id, name, rel, text));
+handle('vps:fileRemove', ({ id, name, rel }) => vps().fileRemove(id, name, rel));
+handle('vps:fileMkdir', ({ id, name, rel, entry }) => vps().fileMkdir(id, name, rel, entry));
+handle('vps:fileRename', ({ id, name, rel, entry }) => vps().fileRename(id, name, rel, entry));
+handle('vps:fileUpload', async ({ id, name, rel }) => {
+  const r = await dialog.showOpenDialog(win, { title: 'Файлы для загрузки на VPS', properties: ['openFile', 'multiSelections'] });
+  if (r.canceled || !r.filePaths.length) return null;
+  return vps().fileUpload(id, name, rel, r.filePaths, (done, total) => send('vps:job', { key: `fu:${id}/${name}`, done, total }));
+});
+handle('vps:fileDownload', async ({ id, name, rel }) => {
+  const base = String(rel || '').split('/').pop() || 'file';
+  const r = await dialog.showSaveDialog(win, { title: 'Сохранить файл с VPS', defaultPath: path.join(app.getPath('downloads'), base) });
+  if (r.canceled || !r.filePath) return null;
+  await vps().fileDownload(id, name, rel, r.filePath, (done, total) => send('vps:job', { key: `fd:${id}/${name}`, done, total }));
+  return { path: r.filePath };
+});
+
+// Перенос с VPS на этот компьютер: мир, моды, плагины и настройки; ядро лаунчер поставит при первом запуске.
+handle('vps:toPc', async ({ id, name, replace }) => {
+  const key = `tp:${id}/${name}`;
+  const step = (t) => send('vps:job', { key, step: T(t) });
+  const meta = await vps().serverMeta(id, name);
+  core.checkArgs(meta.type, meta.mc);
+  const dst = serverDir(meta.type, meta.mc);
+  if (current && current.type === meta.type && current.version === meta.mc) throw new Error('Этот сервер сейчас запущен на ПК — остановите его перед переносом');
+  if (servers.hasServer(dst) && !replace) {
+    return { exists: true, type: meta.type, version: meta.mc };
+  }
+  const tmpTar = path.join(app.getPath('temp'), `mcl-from-vps-${process.pid}-${Date.now()}.tar.gz`);
+  const tmpDir = tmpTar.replace(/\.tar\.gz$/, '');
+  try {
+    await vps().downloadServer(id, name, tmpTar, { full: false }, step, (done, total) => send('vps:job', { key, done, total }));
+    step('Распаковываю на компьютере…');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    await require('tar').x({ file: tmpTar, cwd: tmpDir, strict: true, filter: (p) => !p.split(/[\\/]/).includes('..') });
+    let saved = null;
+    if (servers.hasServer(dst)) {
+      // Прежний сервер на ПК не стираем, а откладываем в папку копий.
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+      saved = path.join(app.getPath('userData'), 'replaced-servers', `${meta.type}-${meta.mc}-${stamp}`);
+      fs.mkdirSync(path.dirname(saved), { recursive: true });
+      fs.renameSync(dst, saved);
+    }
+    const r = servers.importServer(tmpDir, dst);
+    log(`С VPS перенесено: ${r.copied.join(', ') || 'ничего'}.`);
+    step('Готово. Сервер появился в списке слева — запустите его, лаунчер сам поставит ядро.');
+    return { type: meta.type, version: meta.mc, loader: meta.loader || null, saved };
+  } finally {
+    fs.rmSync(tmpTar, { force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// Перенос с одного VPS на другой (через этот компьютер): сервер целиком, вместе с ядром.
+handle('vps:toVps', async ({ id, name, dstId, dstName }) => {
+  if (id === dstId) throw new Error('Выберите другой VPS');
+  const key = `tv:${id}/${name}`;
+  const step = (t) => send('vps:job', { key, step: T(t) });
+  const meta = await vps().serverMeta(id, name);
+  if (!meta.args || !meta.args.length) throw new Error('Не удалось прочитать, как запускается этот сервер. Перенесите его на ПК, а с ПК — на другой VPS');
+  const tmpTar = path.join(app.getPath('temp'), `mcl-vps-vps-${process.pid}-${Date.now()}.tar.gz`);
+  try {
+    await vps().downloadServer(id, name, tmpTar, { full: true }, step, (done, total) => send('vps:job', { key, done, total }));
+    return await vps().uploadTar(
+      dstId,
+      {
+        tarFile: tmpTar,
+        name: dstName || name,
+        install: { type: meta.type, mc: meta.mc, loader: meta.loader, args: meta.args, ramGb: meta.ramGb },
+        need: await core.requiredJava(meta.mc),
+        modded: isModded(meta.type),
+        port: meta.port,
+      },
+      step,
+      (done, total) => send('vps:job', { key, done, total })
+    );
+  } finally {
+    fs.rmSync(tmpTar, { force: true });
+  }
+});
+
+// Chunky на VPS
+handle('vps:chunkyInfo', ({ id, name }) => vps().chunkyInfo(id, name));
+handle('vps:chunkyInstall', async ({ id, name }) => {
+  const ci = await vps().chunkyInfo(id, name);
+  const kinds = mods.kindsFor(ci.type);
+  if (!kinds.length) throw new Error('На ванильный сервер Chunky не поставить — нужен Paper, Fabric, Forge или NeoForge');
+  const kind = kinds.includes('plugin') && (ci.type === 'paper' || core.HYBRID_TYPES.includes(ci.type)) ? 'plugin' : 'mod';
+  const tmp = path.join(app.getPath('temp'), `mcl-chunky-${process.pid}-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmp, { recursive: true });
+    await mods.installProject({ type: ci.type, mc: ci.mc, dir: tmp, projectId: 'chunky', kind, flavor: core.hybridFlavor(ci.type, ci.loader), bySlug: true });
+    const sub = kind === 'plugin' ? 'plugins' : 'mods';
+    const jars = fs.readdirSync(path.join(tmp, sub)).filter((f) => /\.jar$/i.test(f)).map((f) => path.join(tmp, sub, f));
+    if (!jars.length) throw new Error('Не удалось скачать Chunky');
+    await vps().uploadJars(id, name, sub, jars);
+    return { installed: true, running: await vps().isRunning(id, name) };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+handle('vps:chunkyStart', async ({ id, name, radius }) => {
+  const r = Math.round(Number(radius));
+  if (!Number.isInteger(r) || r < 100 || r > 50000) throw new Error('Радиус — от 100 до 50 000 блоков');
+  if (!(await vps().isRunning(id, name))) throw new Error('Сначала запустите сервер на VPS');
+  for (const c of ['chunky center 0 0', `chunky radius ${r}`, 'chunky start']) await vps().command(id, name, c);
+});
+handle('vps:chunkyCancel', async ({ id, name }) => {
+  await vps().command(id, name, 'chunky cancel');
+  await vps().command(id, name, 'chunky confirm');
+});
+handle('vps:chunkyStatus', async ({ id, name }) => {
+  const lines = await vps().chunkyLines(id, name);
+  let st = null;
+  for (const line of lines) {
+    const m = line.match(CHUNKY_RE);
+    if (m) st = { world: m[1], chunks: Number(m[2].replace(/,/g, '')), pct: Number(m[3].replace(',', '.')), eta: m[4], done: false };
+    else if (/Task (finished|stopped|cancelled) for/i.test(line)) st = { ...(st || {}), done: true, pct: /finished/i.test(line) ? 100 : (st || {}).pct || 0 };
+  }
+  return st;
 });
 
 handle('issue:copyLog', () => {

@@ -847,88 +847,248 @@
                 <div id="vps-servers" class="list"></div>
               </section>
 
-              <section class="card" id="vps-stats" hidden>
+              <section class="card vps-man" id="vps-man" hidden>
                 <div class="vps-head">
-                  <h2 id="vs-title">Нагрузка</h2>
-                  <span class="meta" id="vs-sub"></span>
-                  <button type="button" id="vs-close" class="btn small">Скрыть</button>
+                  <h2 id="vm-title">Сервер</h2>
+                  <span class="meta" id="vm-sub"></span>
+                  <button type="button" id="vm-close" class="btn small">Закрыть</button>
                 </div>
-                <div class="stats vs-tiles">
-                  <div class="stat"><span class="stat-label">Процессор сервера</span><b id="vs-cpu">—</b></div>
-                  <div class="stat"><span class="stat-label">Память сервера</span><b id="vs-mem">—</b></div>
-                  <div class="stat"><span class="stat-label">Игроки</span><b id="vs-players">—</b></div>
-                  <div class="stat"><span class="stat-label">Работает</span><b id="vs-up">—</b></div>
-                  <div class="stat"><span class="stat-label">Процессор VPS</span><b id="vs-syscpu">—</b></div>
-                  <div class="stat"><span class="stat-label">Свободно памяти</span><b id="vs-sysmem">—</b></div>
-                  <div class="stat"><span class="stat-label">Свободно на диске</span><b id="vs-disk">—</b></div>
-                  <div class="stat"><span class="stat-label">Папка сервера</span><b id="vs-size">—</b></div>
+                <div class="seg vm-tabs" role="tablist" aria-label="Разделы сервера">
+                  <button type="button" class="seg-btn" role="tab" data-vpane="stats">Графики</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="players">Игроки</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="files">Файлы</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="backups">Бэкапы</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="auto">Автоматика</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="set">Настройки</button>
+                  <button type="button" class="seg-btn" role="tab" data-vpane="more">Ещё</button>
                 </div>
-                <div class="vs-charts">
-                  <figure class="vs-chart">
-                    <figcaption><b>Процессор, %</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
-                    <canvas id="vs-ch-cpu" role="img" aria-label="График загрузки процессора"></canvas>
-                  </figure>
-                  <figure class="vs-chart">
-                    <figcaption><b>Память, ГБ</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
-                    <canvas id="vs-ch-mem" role="img" aria-label="График памяти"></canvas>
-                  </figure>
-                  <figure class="vs-chart">
-                    <figcaption><b>Игроки онлайн</b></figcaption>
-                    <canvas id="vs-ch-players" role="img" aria-label="График числа игроков"></canvas>
-                  </figure>
-                </div>
-                <p class="hint" id="vs-hint"></p>
-              </section>
 
-              <section class="card" id="vps-set" hidden>
-                <div class="vps-head">
-                  <h2 id="vset-title">Настройки</h2>
-                  <button type="button" id="vset-close" class="btn small">Скрыть</button>
+                <div class="vm-pane" id="vps-stats" data-pane="stats" role="tabpanel" hidden>
+                  <div class="row vs-range">
+                    <div class="seg" role="radiogroup" aria-label="За какое время">
+                      <button type="button" class="seg-btn" role="radio" data-vrange="live">30 минут</button>
+                      <button type="button" class="seg-btn" role="radio" data-vrange="24h">Сутки</button>
+                      <button type="button" class="seg-btn" role="radio" data-vrange="7d">Неделя</button>
+                    </div>
+                    <span class="meta" id="vs-sub"></span>
+                  </div>
+                  <div class="stats vs-tiles">
+                    <div class="stat"><span class="stat-label">Процессор сервера</span><b id="vs-cpu">—</b></div>
+                    <div class="stat"><span class="stat-label">Память сервера</span><b id="vs-mem">—</b></div>
+                    <div class="stat"><span class="stat-label">Игроки</span><b id="vs-players">—</b></div>
+                    <div class="stat"><span class="stat-label">Работает</span><b id="vs-up">—</b></div>
+                    <div class="stat"><span class="stat-label">Процессор VPS</span><b id="vs-syscpu">—</b></div>
+                    <div class="stat"><span class="stat-label">Свободно памяти</span><b id="vs-sysmem">—</b></div>
+                    <div class="stat"><span class="stat-label">Свободно на диске</span><b id="vs-disk">—</b></div>
+                    <div class="stat"><span class="stat-label">Папка сервера</span><b id="vs-size">—</b></div>
+                  </div>
+                  <div class="vs-charts">
+                    <figure class="vs-chart">
+                      <figcaption><b>Процессор, %</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
+                      <canvas id="vs-ch-cpu" role="img" aria-label="График загрузки процессора"></canvas>
+                    </figure>
+                    <figure class="vs-chart">
+                      <figcaption><b>Память, ГБ</b><span class="vs-key"><i class="k1"></i>сервер<i class="k2"></i>весь VPS</span></figcaption>
+                      <canvas id="vs-ch-mem" role="img" aria-label="График памяти"></canvas>
+                    </figure>
+                    <figure class="vs-chart">
+                      <figcaption><b>Игроки онлайн</b></figcaption>
+                      <canvas id="vs-ch-players" role="img" aria-label="График числа игроков"></canvas>
+                    </figure>
+                  </div>
+                  <div class="vs-axis" id="vs-axis" hidden><span id="vs-from"></span><span id="vs-to"></span></div>
+                  <p class="hint" id="vs-hint"></p>
+                  <div class="row" id="vs-enable-row" hidden>
+                    <button type="button" id="vs-enable" class="btn">Включить запись истории</button>
+                  </div>
                 </div>
-                <p class="hint" id="vset-load"></p>
-                <div id="vset-body" class="stack" hidden>
-                  <label class="field"><span>Описание в списке серверов</span><input type="text" data-vprop="motd" maxlength="160"></label>
-                  <div class="grid vset-grid">
-                    <label class="field"><span>Игроков</span><input type="number" data-vprop="max-players" min="1" max="1000"></label>
-                    <label class="field"><span>Режим</span>
-                      <select data-vprop="gamemode">
-                        <option value="survival">Выживание</option>
-                        <option value="creative">Творческий</option>
-                        <option value="adventure">Приключение</option>
-                        <option value="spectator">Наблюдатель</option>
+
+                <div class="vm-pane stack" data-pane="players" role="tabpanel" hidden>
+                  <div>
+                    <h3 class="vm-h">Сейчас на сервере <span class="meta" id="vp-count"></span></h3>
+                    <div class="chips" id="vp-online" data-empty="Никого нет"></div>
+                  </div>
+                  <form class="row vp-add" id="vp-form">
+                    <label class="field"><span>Список</span>
+                      <select id="vp-list">
+                        <option value="whitelist">Белый список</option>
+                        <option value="ops">Операторы</option>
+                        <option value="bans">Баны</option>
+                        <option value="ipbans">Баны по IP</option>
                       </select>
                     </label>
-                    <label class="field"><span>Сложность</span>
-                      <select data-vprop="difficulty">
-                        <option value="peaceful">Мирная</option>
-                        <option value="easy">Лёгкая</option>
-                        <option value="normal">Нормальная</option>
-                        <option value="hard">Сложная</option>
-                      </select>
-                    </label>
-                    <label class="field"><span>Память, ГБ</span><input type="number" id="vset-ram" min="1" max="256"></label>
-                    <label class="field"><span>Дальность прорисовки</span><input type="number" data-vprop="view-distance" min="2" max="32"></label>
-                    <label class="field"><span>Дальность симуляции</span><input type="number" data-vprop="simulation-distance" min="2" max="32"></label>
-                    <label class="field"><span>Защита спавна, блоков</span><input type="number" data-vprop="spawn-protection" min="0" max="10000"></label>
-                    <label class="field"><span>Порт</span><input type="number" data-vprop="server-port" min="1" max="65535"></label>
+                    <label class="field vp-value"><span id="vp-value-label">Ник</span><input type="text" id="vp-value" maxlength="45" autocomplete="off" spellcheck="false"></label>
+                    <label class="field vp-reason" id="vp-reason-row" hidden><span>Причина</span><input type="text" id="vp-reason" maxlength="200"></label>
+                    <button type="submit" class="btn primary" id="vp-add">Добавить</button>
+                  </form>
+                  <p class="hint" id="vp-hint"></p>
+                  <div class="vp-lists">
+                    <div><h3 class="vm-h">Белый список <span class="meta" id="vp-wl-state"></span></h3><div class="chips" id="vp-whitelist" data-empty="Пусто"></div></div>
+                    <div><h3 class="vm-h">Операторы</h3><div class="chips" id="vp-ops" data-empty="Пусто"></div></div>
+                    <div><h3 class="vm-h">Баны</h3><div class="chips" id="vp-bans" data-empty="Пусто"></div></div>
+                    <div><h3 class="vm-h">Баны по IP</h3><div class="chips" id="vp-ipbans" data-empty="Пусто"></div></div>
                   </div>
-                  <div class="vset-checks">
-                    <label class="check"><input type="checkbox" data-vprop="pvp"><span>Игроки могут драться друг с другом</span></label>
-                    <label class="check"><input type="checkbox" data-vprop="online-mode"><span>Пускать только лицензионные аккаунты</span></label>
-                    <label class="check"><input type="checkbox" data-vprop="white-list"><span>Белый список: заходят только добавленные игроки</span></label>
-                    <label class="check"><input type="checkbox" data-vprop="allow-flight"><span>Не выкидывать за полёт (нужно для модов с полётом)</span></label>
-                    <label class="check"><input type="checkbox" data-vprop="hardcore"><span>Хардкор: после смерти — только наблюдатель</span></label>
-                    <label class="check"><input type="checkbox" data-vprop="enable-command-block"><span>Командные блоки работают</span></label>
+                </div>
+
+                <div class="vm-pane stack" data-pane="files" role="tabpanel" hidden>
+                  <div class="row vf-bar">
+                    <button type="button" class="btn small" id="vfl-up" title="На уровень выше">↑ Вверх</button>
+                    <nav class="vf-path" id="vfl-path" aria-label="Путь"></nav>
+                    <button type="button" class="btn small" id="vfl-mkdir">Новая папка</button>
+                    <button type="button" class="btn small" id="vfl-upload">Загрузить файлы…</button>
+                    <button type="button" class="btn small" id="vfl-refresh" title="Обновить" aria-label="Обновить">↻</button>
                   </div>
-                  <details class="vset-all">
-                    <summary>Все параметры server.properties <span class="meta" id="vset-count"></span></summary>
-                    <div id="vset-all" class="vset-table"></div>
-                  </details>
+                  <div class="progress" id="vfl-progress" hidden><div id="vfl-bar"></div></div>
+                  <p class="hint" id="vfl-hint"></p>
+                  <div class="vf-list" id="vfl-list" role="list"></div>
+                  <div class="vf-edit" id="vfl-edit" hidden>
+                    <div class="vps-head">
+                      <b id="vfl-edit-name"></b>
+                      <span class="meta" id="vfl-edit-sub"></span>
+                      <button type="button" class="btn small primary" id="vfl-save">Сохранить</button>
+                      <button type="button" class="btn small" id="vfl-edit-close">Закрыть</button>
+                    </div>
+                    <textarea id="vfl-text" spellcheck="false" aria-label="Содержимое файла"></textarea>
+                  </div>
+                </div>
+
+                <div class="vm-pane stack" data-pane="backups" role="tabpanel" hidden>
                   <div class="row">
-                    <button type="button" id="vset-save" class="btn primary">Сохранить</button>
-                    <button type="button" id="vset-restart" class="btn" hidden>Перезапустить сервер</button>
-                    <span class="hint" id="vset-hint"></span>
+                    <button type="button" class="btn primary" id="vb-now">Сделать бэкап сейчас</button>
+                    <span class="hint" id="vb-sched"></span>
                   </div>
+                  <div class="progress" id="vb-progress" hidden><div id="vb-bar"></div></div>
+                  <p class="hint" id="vb-hint"></p>
+                  <div class="list" id="vb-list"></div>
+                </div>
+
+                <div class="vm-pane stack" data-pane="auto" role="tabpanel" hidden>
+                  <p class="hint" id="va-load"></p>
+                  <div class="stack" id="va-body" hidden>
+                    <label class="check"><input type="checkbox" id="va-auto"><span>Держать сервер включённым: запускать после перезагрузки VPS и поднимать после падения</span></label>
+                    <div class="va-line">
+                      <label class="check"><input type="checkbox" id="va-restart-on"><span>Перезапускать каждый день в</span></label>
+                      <input type="time" id="va-restart" aria-label="Время перезапуска">
+                      <span>, предупредить за</span>
+                      <input type="number" id="va-warn" min="0" max="30" aria-label="За сколько минут предупредить">
+                      <span>мин.</span>
+                    </div>
+                    <div class="va-line">
+                      <label class="check"><input type="checkbox" id="va-backup-on"><span>Бэкап каждый день в</span></label>
+                      <input type="time" id="va-backup" aria-label="Время бэкапа">
+                      <span>, хранить последние</span>
+                      <input type="number" id="va-keep" min="1" max="60" aria-label="Сколько бэкапов хранить">
+                    </div>
+                    <p class="hint">Время — по часам этого компьютера. Работает на самом VPS, даже когда лаунчер закрыт.</p>
+
+                    <h3 class="vm-h">Discord</h3>
+                    <div class="row">
+                      <label class="field va-url"><span>Адрес вебхука канала</span><input type="text" inputmode="url" id="va-discord" placeholder="https://discord.com/api/webhooks/…" spellcheck="false"></label>
+                      <button type="button" class="btn" id="va-discord-test">Проверить</button>
+                    </div>
+                    <div class="va-checks">
+                      <label class="check"><input type="checkbox" id="va-dcrash"><span>Падения и перезапуски</span></label>
+                      <label class="check"><input type="checkbox" id="va-dbackup"><span>Бэкапы</span></label>
+                      <label class="check"><input type="checkbox" id="va-djoin"><span>Кто зашёл и вышел</span></label>
+                      <label class="check"><input type="checkbox" id="va-ddisk"><span>Мало места на диске</span></label>
+                    </div>
+
+                    <h3 class="vm-h">Уведомления на этом компьютере</h3>
+                    <div class="va-checks">
+                      <label class="check"><input type="checkbox" id="va-ncrash"><span>Падения и перезапуски</span></label>
+                      <label class="check"><input type="checkbox" id="va-nbackup"><span>Бэкапы</span></label>
+                      <label class="check"><input type="checkbox" id="va-njoin"><span>Кто зашёл и вышел</span></label>
+                      <label class="check"><input type="checkbox" id="va-ndisk"><span>Мало места на диске</span></label>
+                    </div>
+                    <p class="hint">Приходят, пока лаунчер открыт или свёрнут в трей; проверка раз в минуту.</p>
+                    <div class="row">
+                      <button type="button" class="btn primary" id="va-save">Сохранить</button>
+                      <span class="hint" id="va-hint"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="vm-pane stack" id="vps-set" data-pane="set" role="tabpanel" hidden>
+                  <p class="hint" id="vset-load"></p>
+                  <div id="vset-body" class="stack" hidden>
+                    <label class="field"><span>Описание в списке серверов</span><input type="text" data-vprop="motd" maxlength="160"></label>
+                    <div class="grid vset-grid">
+                      <label class="field"><span>Игроков</span><input type="number" data-vprop="max-players" min="1" max="1000"></label>
+                      <label class="field"><span>Режим</span>
+                        <select data-vprop="gamemode">
+                          <option value="survival">Выживание</option>
+                          <option value="creative">Творческий</option>
+                          <option value="adventure">Приключение</option>
+                          <option value="spectator">Наблюдатель</option>
+                        </select>
+                      </label>
+                      <label class="field"><span>Сложность</span>
+                        <select data-vprop="difficulty">
+                          <option value="peaceful">Мирная</option>
+                          <option value="easy">Лёгкая</option>
+                          <option value="normal">Нормальная</option>
+                          <option value="hard">Сложная</option>
+                        </select>
+                      </label>
+                      <label class="field"><span>Память, ГБ</span><input type="number" id="vset-ram" min="1" max="256"></label>
+                      <label class="field"><span>Дальность прорисовки</span><input type="number" data-vprop="view-distance" min="2" max="32"></label>
+                      <label class="field"><span>Дальность симуляции</span><input type="number" data-vprop="simulation-distance" min="2" max="32"></label>
+                      <label class="field"><span>Защита спавна, блоков</span><input type="number" data-vprop="spawn-protection" min="0" max="10000"></label>
+                      <label class="field"><span>Порт</span><input type="number" data-vprop="server-port" min="1" max="65535"></label>
+                    </div>
+                    <div class="vset-checks">
+                      <label class="check"><input type="checkbox" data-vprop="pvp"><span>Игроки могут драться друг с другом</span></label>
+                      <label class="check"><input type="checkbox" data-vprop="online-mode"><span>Пускать только лицензионные аккаунты</span></label>
+                      <label class="check"><input type="checkbox" data-vprop="white-list"><span>Белый список: заходят только добавленные игроки</span></label>
+                      <label class="check"><input type="checkbox" data-vprop="allow-flight"><span>Не выкидывать за полёт (нужно для модов с полётом)</span></label>
+                      <label class="check"><input type="checkbox" data-vprop="hardcore"><span>Хардкор: после смерти — только наблюдатель</span></label>
+                      <label class="check"><input type="checkbox" data-vprop="enable-command-block"><span>Командные блоки работают</span></label>
+                    </div>
+                    <details class="vset-all">
+                      <summary>Все параметры server.properties <span class="meta" id="vset-count"></span></summary>
+                      <div id="vset-all" class="vset-table"></div>
+                    </details>
+                    <div class="row">
+                      <button type="button" id="vset-save" class="btn primary">Сохранить</button>
+                      <button type="button" id="vset-restart" class="btn" hidden>Перезапустить сервер</button>
+                      <span class="hint" id="vset-hint"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="vm-pane stack" data-pane="more" role="tabpanel" hidden>
+                  <section class="vm-sec">
+                    <h3 class="vm-h">Перенести на этот компьютер</h3>
+                    <p class="hint">Мир, моды, плагины и настройки скопируются в лаунчер; сервер на VPS останется как был. Ядро лаунчер поставит при первом запуске.</p>
+                    <div class="row"><button type="button" class="btn" id="vmo-topc">Перенести на ПК</button></div>
+                  </section>
+                  <section class="vm-sec">
+                    <h3 class="vm-h">Перенести на другой VPS</h3>
+                    <div class="row vt-row">
+                      <label class="field"><span>Куда</span><select id="vmo-dst"></select></label>
+                      <label class="field"><span>Имя папки там</span><input type="text" id="vmo-name" maxlength="64"></label>
+                      <button type="button" class="btn" id="vmo-tovps">Перенести</button>
+                    </div>
+                  </section>
+                  <div class="progress" id="vmo-progress" hidden><div id="vmo-bar"></div></div>
+                  <ul class="vt-steps" id="vmo-steps"></ul>
+                  <section class="vm-sec">
+                    <h3 class="vm-h">Прогрузить мир заранее (Chunky)</h3>
+                    <p class="hint">Сервер заранее создаёт местность вокруг спавна — первые игроки не ловят лаги, пока бегают по новым местам.</p>
+                    <div class="row">
+                      <button type="button" class="btn" id="vmo-ck-install" hidden>Установить Chunky</button>
+                      <label class="field vmo-radius" id="vmo-ck-radius-row" hidden><span>Радиус, блоков</span><input type="number" id="vmo-ck-radius" min="100" max="50000" step="100" value="3000"></label>
+                      <button type="button" class="btn primary" id="vmo-ck-go" hidden>Начать</button>
+                      <button type="button" class="btn" id="vmo-ck-cancel" hidden>Остановить</button>
+                    </div>
+                    <div class="progress" id="vmo-ck-progress" hidden><div id="vmo-ck-bar"></div></div>
+                    <p class="hint" id="vmo-ck-hint"></p>
+                  </section>
+                  <section class="vm-sec">
+                    <h3 class="vm-h">Удалить сервер с VPS</h3>
+                    <p class="hint">Папка сервера будет стёрта вместе с миром, модами, настройками и бэкапами на VPS.</p>
+                    <div class="row"><button type="button" class="btn danger" id="vmo-delete">Удалить сервер</button><span class="hint" id="vmo-del-hint"></span></div>
+                  </section>
                 </div>
               </section>
             </div>
@@ -1446,6 +1606,7 @@
   <script src="js/48-mrpack.js"></script>
   <script src="js/50-vps.js"></script>
   <script src="js/51-vps-manage.js"></script>
+  <script src="js/52-vps-more.js"></script>
   <script src="js/60-updates.js"></script>
   <script src="js/70-data.js"></script>
   <script src="js/80-events.js"></script>

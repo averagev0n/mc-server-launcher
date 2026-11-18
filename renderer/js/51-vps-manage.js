@@ -1,11 +1,15 @@
 // Часть интерфейса лаунчера. Все файлы из renderer/js подключаются по порядку в index.html
 // и видят общие переменные друг друга (обычные скрипты, без сборщика).
-// ---- VPS: графики нагрузки, настройки и удаление сервера ----
+// ---- VPS: панель сервера (вкладки), графики нагрузки, настройки и удаление ----
 
 const VS_POINTS = 360; // 360 замеров × 5 с = 30 минут
 const vman = {
-  stats: null, // { id, name, port } — чьи графики открыты
-  set: null, // { id, name } — чьи настройки открыты
+  cur: null, // { id, name, port } — чей сервер открыт в панели
+  pane: 'stats',
+  stats: null, // то же, пока открыта вкладка «Графики»
+  set: null, // { id, name } — пока открыта вкладка «Настройки»
+  range: 'live', // live | 24h | 7d
+  long: null, // { points, from, to } — история за сутки/неделю
   timer: null,
   busy: false,
   tick: 0,
@@ -17,45 +21,138 @@ const vman = {
 };
 // Ключи, у которых в настройках есть отдельное поле (остальные — в «Все параметры»).
 const VSET_DEFAULTS = { motd: 'A Minecraft Server', 'max-players': '20', gamemode: 'survival', difficulty: 'easy', 'server-port': '25565', 'online-mode': 'true', pvp: 'true', 'white-list': 'false' };
+// Что делает каждая вкладка при открытии и закрытии; другие части интерфейса дописывают свои.
+const VPANES = {};
 
 const vsKey = (o) => `${o.id}/${o.name}`;
 const vsGb = (bytes) => (bytes / 1024 ** 3).toFixed(1).replace('.', ',');
 const vpsServerOf = (name) => (vpsState.info && vpsState.info.servers.find((s) => s.name === name)) || null;
 
-// ---- графики ----
+// ---- панель сервера ----
 
-function openVpsStats(s) {
+/** Открыть панель сервера s на вкладке pane. */
+function openVpsPane(s, pane) {
   const v = vpsSel();
   if (!v) return;
-  vman.stats = { id: v.id, name: s.name, port: s.port || '25565' };
-  vman.tick = 0;
-  vman.last = null;
-  $('vps-stats').hidden = false;
-  $('vs-title').textContent = `Нагрузка: ${s.name}`;
-  $('vs-sub').textContent = 'обновляется каждые 5 секунд';
-  for (const id of ['vs-cpu', 'vs-mem', 'vs-players', 'vs-up', 'vs-syscpu', 'vs-sysmem', 'vs-disk', 'vs-size']) {
-    $(id).textContent = '…';
-    $(id).className = '';
-  }
-  setHint('vs-hint', 'Снимаю показания…');
-  drawVpsCharts();
-  clearInterval(vman.timer);
-  vman.timer = setInterval(pollVpsStats, 5000);
-  pollVpsStats();
-  $('vps-stats').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const same = vman.cur && vman.cur.id === v.id && vman.cur.name === s.name;
+  if (!same) closeVpsMan();
+  vman.cur = { id: v.id, name: s.name, port: s.port || '25565' };
+  $('vps-man').hidden = false;
+  $('vm-title').textContent = s.name;
+  $('vm-sub').textContent = `${s.type || '?'} ${s.mc || ''} · ${v.host}${s.port && s.port !== '25565' ? ':' + s.port : ''}`;
+  showVpsPane(pane || vman.pane || 'stats', !same);
+  $('vps-man').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
+function showVpsPane(pane, force) {
+  if (!VPANES[pane]) pane = 'stats';
+  if (vman.pane === pane && !force && !$('vps-man').hidden && vman.opened === pane) return;
+  const prev = vman.opened && VPANES[vman.opened];
+  if (prev && prev.canLeave && vman.opened !== pane && !prev.canLeave()) return;
+  if (prev && prev.close) prev.close();
+  vman.pane = pane;
+  vman.opened = pane;
+  for (const b of document.querySelectorAll('[data-vpane]')) b.setAttribute('aria-selected', String(b.dataset.vpane === pane));
+  for (const p of document.querySelectorAll('.vm-pane')) p.hidden = p.dataset.pane !== pane;
+  VPANES[pane].open(vman.cur);
+}
+
+function closeVpsMan() {
+  if (vman.opened && VPANES[vman.opened] && VPANES[vman.opened].close) VPANES[vman.opened].close();
+  vman.opened = null;
+  vman.cur = null;
+  $('vps-man').hidden = true;
+}
+
+/** Работает ли сервер, открытый в панели (по последним сведениям о VPS). */
+const vmRunning = () => {
+  const srv = vman.cur && vpsServerOf(vman.cur.name);
+  return !!(srv && srv.running);
+};
+
+// Совместимость: кнопки строки сервера открывают нужную вкладку.
+function openVpsStats(s) {
+  openVpsPane(s, 'stats');
+}
+function openVpsSettings(s) {
+  openVpsPane(s, 'set');
+}
 function closeVpsStats() {
-  vman.stats = null;
-  clearInterval(vman.timer);
-  vman.timer = null;
-  $('vps-stats').hidden = true;
+  if (vman.opened === 'stats') closeVpsMan();
+}
+function closeVpsSettings() {
+  if (vman.opened === 'set') closeVpsMan();
+}
+
+// ---- графики ----
+
+VPANES.stats = {
+  open(o) {
+    vman.stats = { ...o };
+    vman.tick = 0;
+    vman.last = null;
+    for (const id of ['vs-cpu', 'vs-mem', 'vs-players', 'vs-up', 'vs-syscpu', 'vs-sysmem', 'vs-disk', 'vs-size']) {
+      $(id).textContent = '…';
+      $(id).className = '';
+    }
+    setVsRange(vman.range, true);
+    clearInterval(vman.timer);
+    vman.timer = setInterval(pollVpsStats, 5000);
+    pollVpsStats();
+  },
+  close() {
+    vman.stats = null;
+    clearInterval(vman.timer);
+    vman.timer = null;
+  },
+};
+
+function setVsRange(range, quiet) {
+  vman.range = range;
+  for (const b of document.querySelectorAll('[data-vrange]')) b.setAttribute('aria-checked', String(b.dataset.vrange === range));
+  $('vs-enable-row').hidden = true;
+  $('vs-axis').hidden = range === 'live';
+  if (range === 'live') {
+    $('vs-sub').textContent = 'обновляется каждые 5 секунд';
+    if (!quiet || !vman.last) setHint('vs-hint', 'Снимаю показания…');
+    vman.long = null;
+    drawVpsCharts();
+    return;
+  }
+  $('vs-sub').textContent = range === '7d' ? 'за неделю, по часам с VPS' : 'за сутки, по 5 минут';
+  vman.long = null;
+  drawVpsCharts();
+  loadVpsHistory(range);
+}
+
+async function loadVpsHistory(range) {
+  const o = vman.stats;
+  if (!o) return;
+  setHint('vs-hint', 'Загружаю историю с VPS…');
+  try {
+    const r = await api.call('vps:history', { id: o.id, name: o.name, range });
+    if (vman.stats !== o || vman.range !== range) return;
+    if (!r.installed) {
+      setHint('vs-hint', 'История за сутки и неделю пишется на самом VPS фоновым скриптом лаунчера — раз в минуту, даже когда лаунчер закрыт. Сейчас он не включён.', 'warn');
+      $('vs-enable-row').hidden = false;
+      return;
+    }
+    vman.long = r;
+    const any = r.points.some((p) => p.sysCpu !== null);
+    setHint('vs-hint', any ? '' : 'Записей пока нет — первые появятся через пару минут.');
+    const fmt = (t) => new Date(t).toLocaleString(window.I18N_LOCALE || 'ru-RU', range === '7d' ? { day: 'numeric', month: 'short' } : { hour: '2-digit', minute: '2-digit' });
+    $('vs-from').textContent = fmt(r.from);
+    $('vs-to').textContent = 'сейчас';
+    drawVpsCharts();
+  } catch (e) {
+    if (vman.stats === o) setHint('vs-hint', e.message, 'bad');
+  }
 }
 
 async function pollVpsStats() {
   const o = vman.stats;
   if (!o || vman.busy) return;
-  if (!vpsSel() || vpsSel().id !== o.id) return closeVpsStats();
+  if (!vpsSel() || vpsSel().id !== o.id) return closeVpsMan();
   if (tab !== 'vps' || document.hidden) return; // вкладка не видна — не нагружаем VPS
   vman.busy = true;
   const size = vman.tick % 12 === 0; // размер папки — раз в минуту, он считается дольше
@@ -79,7 +176,7 @@ async function pollVpsStats() {
     vman.last = r;
     renderVpsStats(r);
   } catch (e) {
-    if (vman.stats === o) setHint('vs-hint', e.message, 'bad');
+    if (vman.stats === o && vman.range === 'live') setHint('vs-hint', e.message, 'bad');
   } finally {
     vman.busy = false;
   }
@@ -114,14 +211,15 @@ function renderVpsStats(r) {
   const size = vman.sizes.get(vsKey(o));
   if (size !== undefined) setStat('vs-size', `${vsGb(size)} ГБ`);
 
+  if (vman.range !== 'live') return; // подсказка — про историю, её не трогаем
   if (!r.running) setHint('vs-hint', 'Сервер остановлен — графики показывают только сам VPS.');
   else if (r.players === null) setHint('vs-hint', 'Сколько игроков, не видно: порт сервера закрыт снаружи или сервер ещё загружается.', 'warn');
   else setHint('vs-hint', '');
   drawVpsCharts();
 }
 
-/** Линии на canvas: series — [{ data, color }], значения null — разрыв линии. */
-function drawSeriesChart(c, series, max, label) {
+/** Линии на canvas: series — [{ data, color }], значения null — разрыв линии; count — точек на ширину. */
+function drawSeriesChart(c, series, max, label, count = VS_POINTS) {
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth;
   const h = c.clientHeight;
@@ -147,22 +245,30 @@ function drawSeriesChart(c, series, max, label) {
   g.font = '10.5px ' + (css.getPropertyValue('--mono').trim() || 'monospace');
   g.textBaseline = 'top';
   g.fillText(label, 2, 1);
-  const step = w / (VS_POINTS - 1);
+  const step = w / (count - 1);
   for (const s of series) {
     g.strokeStyle = s.color;
     g.lineWidth = 1.6;
     g.lineJoin = 'round';
     g.beginPath();
     let pen = false;
+    let lone = null;
     s.data.forEach((v, i) => {
       if (v === null || v === undefined) {
+        if (lone) g.rect(lone[0] - 0.8, lone[1] - 0.8, 1.6, 1.6); // одиночная точка между разрывами
         pen = false;
+        lone = null;
         return;
       }
       const x = w - (s.data.length - 1 - i) * step;
       const y = h - 2 - (Math.min(max, Math.max(0, v)) / max) * (h - top - 2);
-      if (pen) g.lineTo(x, y);
-      else g.moveTo(x, y);
+      if (pen) {
+        g.lineTo(x, y);
+        lone = null;
+      } else {
+        g.moveTo(x, y);
+        lone = [x, y];
+      }
       pen = true;
     });
     g.stroke();
@@ -170,56 +276,54 @@ function drawSeriesChart(c, series, max, label) {
 }
 
 function drawVpsCharts() {
-  if ($('vps-stats').hidden || !vman.stats) return;
-  const h = vman.hist.get(vsKey(vman.stats)) || [];
+  if ($('vps-man').hidden || !vman.stats || vman.opened !== 'stats') return;
+  const long = vman.range !== 'live';
+  const h = long ? (vman.long ? vman.long.points : []) : vman.hist.get(vsKey(vman.stats)) || [];
+  const count = long ? Math.max(2, h.length || 288) : VS_POINTS;
   const css = getComputedStyle(document.documentElement);
   const c1 = css.getPropertyValue('--accent').trim() || '#2f5bea';
   const c2 = css.getPropertyValue('--chart-2').trim() || '#9a6bd6';
-  drawSeriesChart($('vs-ch-cpu'), [{ data: h.map((p) => p.sysCpu), color: c2 }, { data: h.map((p) => p.cpu), color: c1 }], 100, '100%');
+  drawSeriesChart($('vs-ch-cpu'), [{ data: h.map((p) => p.sysCpu), color: c2 }, { data: h.map((p) => p.cpu), color: c1 }], 100, '100%', count);
   const total = h.reduce((m, p) => Math.max(m, p.total || 0), 0) || 1024 ** 3;
   const gb = 1024 ** 3;
   drawSeriesChart(
     $('vs-ch-mem'),
     [{ data: h.map((p) => (p.sysUsed === null ? null : p.sysUsed / gb)), color: c2 }, { data: h.map((p) => (p.mem === null ? null : p.mem / gb)), color: c1 }],
     total / gb,
-    `${vsGb(total)} ГБ`
+    `${vsGb(total)} ГБ`,
+    count
   );
   const peak = h.reduce((m, p) => Math.max(m, p.players || 0), 0);
   const maxP = Math.max(4, Math.ceil((peak + 1) / 4) * 4);
-  drawSeriesChart($('vs-ch-players'), [{ data: h.map((p) => p.players), color: c1 }], maxP, String(maxP));
+  drawSeriesChart($('vs-ch-players'), [{ data: h.map((p) => p.players), color: c1 }], maxP, String(maxP), count);
 }
 
 // ---- настройки ----
 
-async function openVpsSettings(s) {
-  const v = vpsSel();
-  if (!v) return;
-  const o = { id: v.id, name: s.name };
-  vman.set = o;
-  $('vps-set').hidden = false;
-  $('vset-title').textContent = `Настройки: ${s.name}`;
-  $('vset-body').hidden = true;
-  $('vset-restart').hidden = true;
-  setHint('vset-hint', '');
-  setHint('vset-load', 'Загружаю настройки с VPS…');
-  $('vps-set').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  try {
-    const r = await api.call('vps:settings', o);
-    if (vman.set !== o) return;
-    vman.props = new Map(r.props);
-    vman.ram = r.ramGb;
-    fillVpsSettings(r);
-    setHint('vset-load', r.hasFile ? '' : 'На VPS ещё нет файла server.properties — он появится после первого запуска. Основные параметры можно задать заранее.', r.hasFile ? '' : 'warn');
-    $('vset-body').hidden = false;
-  } catch (e) {
-    if (vman.set === o) setHint('vset-load', e.message, 'bad');
-  }
-}
-
-function closeVpsSettings() {
-  vman.set = null;
-  $('vps-set').hidden = true;
-}
+VPANES.set = {
+  async open(o) {
+    vman.set = { id: o.id, name: o.name };
+    const cur = vman.set;
+    $('vset-body').hidden = true;
+    $('vset-restart').hidden = true;
+    setHint('vset-hint', '');
+    setHint('vset-load', 'Загружаю настройки с VPS…');
+    try {
+      const r = await api.call('vps:settings', cur);
+      if (vman.set !== cur) return;
+      vman.props = new Map(r.props);
+      vman.ram = r.ramGb;
+      fillVpsSettings(r);
+      setHint('vset-load', r.hasFile ? '' : 'На VPS ещё нет файла server.properties — он появится после первого запуска. Основные параметры можно задать заранее.', r.hasFile ? '' : 'warn');
+      $('vset-body').hidden = false;
+    } catch (e) {
+      if (vman.set === cur) setHint('vset-load', e.message, 'bad');
+    }
+  },
+  close() {
+    vman.set = null;
+  },
+};
 
 /** Значение параметра для поля: что в файле, а если ключа нет — значение по умолчанию. */
 const vsetValue = (k) => (vman.props.has(k) ? vman.props.get(k) : VSET_DEFAULTS[k]);
@@ -308,12 +412,11 @@ async function saveVpsSettings() {
     await api.call('vps:saveSettings', { ...o, values, ramGb: ramChanged ? ram : undefined });
     for (const [k, v] of Object.entries(values)) vman.props.set(k, v);
     vman.ram = ram;
-    const srv = vpsServerOf(o.name);
-    const running = !!(srv && srv.running);
+    const running = vmRunning();
     setHint('vset-hint', running ? 'Сохранено. Изменения заработают после перезапуска сервера.' : 'Сохранено. Изменения заработают при следующем запуске.', 'good');
     $('vset-restart').hidden = !running;
     await refreshVpsInfo(true);
-    if (vman.stats && vman.stats.name === o.name && values['server-port']) vman.stats.port = values['server-port'];
+    if (vman.cur && vman.cur.name === o.name && values['server-port']) vman.cur.port = values['server-port'];
   } catch (e) {
     setHint('vset-hint', e.message, 'bad');
   }
@@ -349,26 +452,50 @@ async function deleteVpsServer(s) {
   // Строка сервера исчезнет из списка — сообщение показываем вверху.
   setHint('vps-hint', `Сервер «${s.name}» удалён с VPS.`, 'good');
   if (vpsState.console === s.name) closeVpsConsole();
-  if (vman.stats && vman.stats.name === s.name) closeVpsStats();
-  if (vman.set && vman.set.name === s.name) closeVpsSettings();
+  if (vman.cur && vman.cur.name === s.name) closeVpsMan();
   vman.hist.delete(`${v.id}/${s.name}`);
   return `Сервер «${s.name}» удалён с VPS.`;
 }
 
-// Сменили VPS — закрываем графики и настройки прежнего.
+// Сменили VPS — закрываем панель сервера прежнего.
 {
   const baseSelect = selectVps;
   selectVps = async function (id) {
-    if (vpsState.sel !== id) {
-      closeVpsStats();
-      closeVpsSettings();
-    }
+    if (vpsState.sel !== id) closeVpsMan();
     return baseSelect(id);
   };
 }
+// Сервер пропал из списка (удалили на VPS) — закрываем его панель.
+{
+  const baseRender = renderVps;
+  renderVps = function () {
+    baseRender();
+    if (vman.cur && vpsState.info && !vpsServerOf(vman.cur.name)) closeVpsMan();
+  };
+}
 
-$('vs-close').addEventListener('click', closeVpsStats);
-$('vset-close').addEventListener('click', closeVpsSettings);
+$('vm-close').addEventListener('click', () => {
+  const p = vman.opened && VPANES[vman.opened];
+  if (p && p.canLeave && !p.canLeave()) return;
+  closeVpsMan();
+  renderVps();
+});
+for (const b of document.querySelectorAll('[data-vpane]')) b.addEventListener('click', () => vman.cur && showVpsPane(b.dataset.vpane));
+for (const b of document.querySelectorAll('[data-vrange]')) b.addEventListener('click', () => vman.stats && setVsRange(b.dataset.vrange));
+$('vs-enable').addEventListener('click', async () => {
+  const o = vman.stats;
+  if (!o) return;
+  $('vs-enable').disabled = true;
+  setHint('vs-hint', 'Включаю…');
+  try {
+    const r = await api.call('vps:autoEnable', { id: o.id });
+    $('vs-enable-row').hidden = true;
+    setHint('vs-hint', r.warn || 'Включено. Первые записи появятся через пару минут.', r.warn ? 'warn' : 'good');
+  } catch (e) {
+    setHint('vs-hint', e.message, 'bad');
+  }
+  $('vs-enable').disabled = false;
+});
 $('vset-save').addEventListener('click', saveVpsSettings);
 $('vset-restart').addEventListener('click', restartVpsServer);
 window.addEventListener('resize', () => drawVpsCharts());

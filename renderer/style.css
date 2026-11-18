@@ -631,6 +631,74 @@ input[type="time"] {
 .vset-row input[type="text"] { height: 30px; }
 .vset-row input[type="checkbox"] { justify-self: start; width: 16px; height: 16px; accent-color: var(--accent); }
 
+/* ---- панель сервера на VPS: вкладки ---- */
+
+.vps-srv .btn[aria-expanded="true"] { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* Колонка с прокруткой не должна сжимать карточки: иначе поля и списки становятся ниже обычного. */
+.vps-scroll > .card { flex-shrink: 0; }
+.vps-man { gap: 12px; }
+.vm-tabs { display: flex; flex-wrap: wrap; align-self: flex-start; max-width: 100%; }
+.vm-tabs .seg-btn { padding: 0 11px; }
+.vm-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.vm-pane[hidden] { display: none; }
+.vm-h { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 6px !important; }
+.vm-h .meta { color: var(--muted); font-size: 12px; font-weight: 400; }
+.vps-man .row { flex-wrap: wrap; align-items: flex-end; }
+.vps-man .row .btn { flex: none; }
+.vps-man .row > .hint { align-self: center; }
+/* «.card .row select { flex: 1 }» в поле-колонке дал бы списку нулевую высоту. */
+.vps-man .row .field > select { flex: none; }
+.vm-sec { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.vm-sec:first-child { border-top: 0; padding-top: 0; }
+.vm-sec .hint { margin: 0; }
+
+.vs-range { align-items: center !important; gap: 12px; }
+.vs-range .meta { color: var(--muted); font-size: 12.5px; }
+.vs-axis { display: flex; justify-content: space-between; color: var(--muted); font: 11px var(--mono); margin-top: -6px; }
+
+.vp-add .field { min-width: 140px; }
+.vp-add .vp-value { flex: 1; }
+.vp-add .vp-reason { flex: 1.4; }
+.vp-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 20px; }
+
+.vf-bar { align-items: center !important; }
+.vf-path { flex: 1 1 160px; min-width: 0; display: flex; align-items: center; gap: 2px; font: 12.5px var(--mono); color: var(--muted); white-space: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.linkish { border: 0; background: none; padding: 2px 4px; border-radius: 5px; font: inherit; color: var(--accent); cursor: pointer; }
+.linkish:hover:not(:disabled) { background: var(--hover); }
+.linkish:disabled { color: var(--text); cursor: default; }
+.vf-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-height: 420px; overflow-y: auto; }
+.vf-list .list-empty { margin: 16px auto; }
+.vf-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 5px 8px 5px 10px; border-top: 1px solid var(--line); }
+.vf-row:first-child { border-top: 0; }
+.vf-row:hover { background: var(--hover); }
+.vf-name { border: 0; background: none; padding: 2px 0; text-align: left; font: 13px var(--mono); color: var(--text); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vf-name.dir { font-weight: 600; }
+.vf-name:hover { color: var(--accent); }
+.vf-row .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.vf-acts { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.vf-acts .btn.small { height: 26px; padding: 0 8px; font-size: 12px; }
+.vf-edit { display: flex; flex-direction: column; gap: 8px; }
+.vf-edit .vps-head b { flex: 1; min-width: 0; font: 600 13px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vf-edit .vps-head .meta { flex: none; }
+.vf-edit textarea { min-height: 280px; resize: vertical; font: 12.5px/1.5 var(--mono); padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--raise); color: var(--text); tab-size: 4; white-space: pre; }
+.vb-row { align-items: center; }
+.vb-row .item-title { flex-wrap: wrap; row-gap: 0; }
+.vb-row .item-title .name { flex: none; overflow: visible; }
+.vb-row .item-title .meta { white-space: nowrap; }
+
+.va-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13.5px; }
+.va-line .check { align-items: center; }
+.va-line input[type="time"] { width: 104px; height: 30px; padding: 0 6px; }
+.va-line input[type="number"] { width: 64px; height: 30px; }
+.va-line input:disabled { opacity: .55; }
+.va-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 16px; }
+.va-checks input:disabled + span { opacity: .55; }
+.va-url { flex: 1; min-width: 240px; }
+@media (max-width: 720px) {
+  .vf-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .vf-row .meta { display: none; }
+}
+
 /* ---- объяснения ошибок ---- */
 
 .issues { flex: none; display: flex; flex-direction: column; gap: 6px; max-height: 48%; min-height: 0; }
